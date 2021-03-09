@@ -1,109 +1,96 @@
-use conec::quinn::Certificate;
-use conec::{client::IncomingStreams, InStream, OutStream};
-use conec::{Client, ClientConfig};
-use std::io::BufRead;
-use lazy_static::lazy_static;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-//use futures_util::stream::stream::StreamExt;
-use futures::{executor::block_on, future, prelude::*};
-use tokio::io::AsyncBufReadExt;
-use tokio_serde::{formats::SymmetricalBincode, SymmetricallyFramed};
+use log::debug;
 
 mod mpc;
 
 use ark_bls12_377::Fr;
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_ff::{FftField, Field};
+use ark_poly::domain::radix2::Radix2EvaluationDomain;
+use ark_poly::EvaluationDomain;
 use std::str::FromStr;
 
-type VecU8Out = SymmetricallyFramed<OutStream, Vec<u8>, SymmetricalBincode<Vec<u8>>>;
-type VecU8In = SymmetricallyFramed<InStream, Vec<u8>, SymmetricalBincode<Vec<u8>>>;
+use mpc::channel;
+use mpc::MpcVal;
 
-lazy_static! {
-    static ref CH: Mutex<Option<FieldChannel>> = Mutex::new(None);
+use structopt::StructOpt;
+
+#[derive(Debug, StructOpt)]
+#[structopt(name = "client", about = "An example MPC")]
+struct Opt {
+    /// Activate debug mode
+    // short and long flags (-d, --debug) will be deduced from the field's name
+    #[structopt(short, long)]
+    debug: bool,
+
+    /// Your port
+    #[structopt()]
+    port: u16,
+
+    /// Peer port
+    #[structopt()]
+    peer_port: u16,
+
+    /// Input a
+    #[structopt()]
+    a: u64,
+
+    /// Input b
+    #[structopt()]
+    b: u64,
 }
 
-struct FieldChannel {
-    conec_client: Client,
-    incoming: IncomingStreams,
-    send: VecU8Out,
-    recv: VecU8In,
-    id: String,
-    other_id: String,
+fn computation<F: Field>(mut a: F, b: F) -> F {
+    a *= &b;
+    a
 }
 
-impl FieldChannel {
-    async fn new(id: String, other_id: String) -> Self {
-        let coord = "localhost".to_owned();
-        let (mut client, mut incoming) = {
-            let mut client_cfg = ClientConfig::new(id.clone(), coord);
-            let mut cert_path = std::env::temp_dir();
-            cert_path.push("cert.der");
-            client_cfg.set_ca(
-                Certificate::from_der(&std::fs::read(cert_path).unwrap())
-                    .expect("could not find cert file at /tmp/cert.der"),
-            );
-            eprintln!("Fut4");
-            conec::Client::new(client_cfg).await.unwrap()
-        };
-        let (send, recv) = if &id < &other_id {
-            eprintln!("Initiating");
-            loop {
-                if let Ok((send, recv)) = client.new_stream(other_id.clone()).await {
-                    break (send, recv);
-                }
-                eprintln!("Retry");
-                tokio::time::delay_for(std::time::Duration::from_millis(1000)).await;
-            }
-        } else {
-            eprintln!("Waiting");
-            let (_, i, send, recv) = incoming.next().await.unwrap();
-            eprintln!("Id: {:?}", i);
-            (send, recv)
-        };
-        let s = SymmetricallyFramed::new(send, SymmetricalBincode::<Vec<u8>>::default());
-        let r = SymmetricallyFramed::new(recv, SymmetricalBincode::<Vec<u8>>::default());
-        FieldChannel {
-            conec_client: client,
-            incoming,
-            send: s,
-            recv: r,
-            id,
-            other_id,
-        }
+fn fft_computation<F: FftField>(mut vs: Vec<F>) -> Vec<F> {
+    let d = Radix2EvaluationDomain::<F>::new(4).unwrap();
+    for (i, v) in vs.iter().enumerate() {
+        println!("  {}: {}", i, v);
     }
-    async fn exchange<F: ark_ff::Field>(&mut self, f: F) -> F {
-        let mut bytes_out = Vec::new();
-        f.serialize(&mut bytes_out).unwrap();
-        self.send.send(bytes_out).await.unwrap();
-        let bytes_in = self.recv.try_next().await.expect("closed").expect("EOF");
-        F::deserialize(&bytes_in[..]).unwrap()
-    }
+    d.ifft_in_place(&mut vs);
+    vs
 }
 
-//pub fn init_mpc(id: String, other_id: String) {
-//    block_on(
-//}
+type MFr = MpcVal<Fr>;
 
-
-#[tokio::main]
-async fn main() -> () {
-    let id = std::env::args().nth(1).unwrap();
-    let other_id = std::env::args().nth(2).unwrap();
-    eprintln!("b4 create");
-    let mut channel = block_on(FieldChannel::new(id, other_id));
-    eprintln!("after create");
-    let stdin = std::io::stdin();
-    eprintln!("Start");
-    for l in stdin.lock().lines().map(|l| l.unwrap()) {
-        let token = l.trim();
-        eprintln!("Line: {}", token);
-        let field_elem = Fr::from_str(&token).unwrap();
-        eprintln!("F: {:?}", field_elem);
-        let field_elem2 = block_on(channel.exchange(field_elem));
-        eprintln!("F: {:?}", field_elem2);
+fn main() -> () {
+    let opt = Opt::from_args();
+    if opt.debug {
+        env_logger::builder()
+            .filter_level(log::LevelFilter::Debug)
+            .init();
+    } else {
+        env_logger::init();
     }
-    eprintln!("Done");
+    let id = u16::from_str(&std::env::args().nth(1).unwrap()).unwrap();
+    let other_id = u16::from_str(&std::env::args().nth(2).unwrap()).unwrap();
+    channel::init(id, other_id);
+    debug!("Start");
+    let a = MFr::from_shared(Fr::from(opt.a));
+    let b = MFr::from_shared(Fr::from(opt.b));
+    let c = computation(a, b);
+    println!("c: {}", c);
+    let cc = c.publicize();
+    println!("cc: {}", cc);
+    let mut vs = fft_computation(vec![a, a, a, a]);
+    for v in &mut vs {
+        *v = v.publicize();
+    }
+    for (i, v) in vs.iter().enumerate() {
+        println!("  {}: {}", i, v);
+    }
+    //let stdin = std::io::stdin();
+    //for l in stdin.lock().lines().map(|l| l.unwrap()) {
+    //    let token = l.trim();
+    //    debug!("Line: {}", token);
+    //    let field_elem = Fr::from_str(&token).unwrap();
+    //    debug!("F: {:?}", field_elem);
+    //    let field_elem2 = channel::exchange(field_elem);
+    //    debug!("F: {:?}", field_elem2);
+    //}
+    channel::deinit();
+    debug!("Done");
 
     //    let coord = "localhost".to_owned();
     //    let (mut client, mut incoming) = {

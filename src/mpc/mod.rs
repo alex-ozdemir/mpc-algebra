@@ -1,19 +1,13 @@
 use ark_bls12_377::Bls12_377;
-use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
+//use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_ec::PairingEngine;
 use ark_ff::{FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
 use ark_serialize::*;
 use ark_std::UniformRand;
-use lazy_static::lazy_static;
 use rand::prelude::*;
 use std::ops::*;
 
-lazy_static! {
-    static ref PARTY_ID: u32 = 0;
-}
-
-fn is_party_0() -> bool {
-    *PARTY_ID == 0
-}
+pub mod channel;
 
 // const N_PARTIES: u32 = 2;
 
@@ -85,13 +79,13 @@ impl<F: AddAssign<F>> AddAssign<MpcVal<F>> for MpcVal<F> {
     fn add_assign(&mut self, other: MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, false) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.add_assign(other.val);
                 } else {
                 }
             }
             (false, true) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.add_assign(other.val);
                 } else {
                     self.val = other.val;
@@ -109,7 +103,7 @@ impl<F: Add<F, Output = F>> Add<MpcVal<F>> for MpcVal<F> {
     type Output = MpcVal<F>;
     fn add(self, other: MpcVal<F>) -> Self::Output {
         Self::new(
-            if self.shared == other.shared || is_party_0() {
+            if self.shared == other.shared || channel::am_first() {
                 self.val.add(other.val)
             } else if other.shared {
                 other.val
@@ -125,13 +119,13 @@ impl<'a, F: AddAssign<&'a F> + Clone> AddAssign<&'a MpcVal<F>> for MpcVal<F> {
     fn add_assign(&mut self, other: &'a MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, false) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.add_assign(&other.val);
                 } else {
                 }
             }
             (false, true) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.add_assign(&other.val);
                 } else {
                     self.val = other.val.clone();
@@ -149,7 +143,7 @@ impl<'a, F: Add<&'a F, Output = F> + Clone> Add<&'a MpcVal<F>> for MpcVal<F> {
     type Output = MpcVal<F>;
     fn add(self, other: &'a MpcVal<F>) -> Self::Output {
         Self::new(
-            if self.shared == other.shared || is_party_0() {
+            if self.shared == other.shared || channel::am_first() {
                 self.val.add(&other.val)
             } else if other.shared {
                 other.val.clone()
@@ -165,13 +159,13 @@ impl<F: SubAssign<F> + Neg<Output = F>> SubAssign<MpcVal<F>> for MpcVal<F> {
     fn sub_assign(&mut self, other: MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, false) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.sub_assign(other.val);
                 } else {
                 }
             }
             (false, true) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.sub_assign(other.val);
                 } else {
                     self.val = -other.val;
@@ -189,7 +183,7 @@ impl<F: Sub<F, Output = F> + Neg<Output = F>> Sub<MpcVal<F>> for MpcVal<F> {
     type Output = MpcVal<F>;
     fn sub(self, other: MpcVal<F>) -> Self::Output {
         Self::new(
-            if self.shared == other.shared || is_party_0() {
+            if self.shared == other.shared || channel::am_first() {
                 self.val.sub(other.val)
             } else if other.shared {
                 -other.val
@@ -205,13 +199,13 @@ impl<'a, F: SubAssign<&'a F> + Clone + Neg<Output = F>> SubAssign<&'a MpcVal<F>>
     fn sub_assign(&mut self, other: &'a MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, false) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.sub_assign(&other.val);
                 } else {
                 }
             }
             (false, true) => {
-                if is_party_0() {
+                if channel::am_first() {
                     self.val.sub_assign(&other.val);
                 } else {
                     self.val = -other.val.clone();
@@ -229,7 +223,7 @@ impl<'a, F: Sub<&'a F, Output = F> + Clone + Neg<Output = F>> Sub<&'a MpcVal<F>>
     type Output = MpcVal<F>;
     fn sub(self, other: &'a MpcVal<F>) -> Self::Output {
         Self::new(
-            if self.shared == other.shared || is_party_0() {
+            if self.shared == other.shared || channel::am_first() {
                 self.val.sub(&other.val)
             } else if other.shared {
                 -other.val.clone()
@@ -241,31 +235,71 @@ impl<'a, F: Sub<&'a F, Output = F> + Clone + Neg<Output = F>> Sub<&'a MpcVal<F>>
     }
 }
 
-impl<G, F: MulAssign<G>> MulAssign<MpcVal<G>> for MpcVal<F> {
-    fn mul_assign(&mut self, other: MpcVal<G>) {
+impl<F: Field + channel::Triple<F, F>> MulAssign<MpcVal<F>> for MpcVal<F> {
+    fn mul_assign(&mut self, other: MpcVal<F>) {
         match (self.shared, other.shared) {
-            (true, true) => unimplemented!("ss mul"),
+            (true, true) => {
+                // x * y = z
+                let (x, y, z) = F::triple();
+                let mut xa = std::mem::replace(self, z);
+                xa += &x;
+                let xa = xa.publicize();
+                let mut by = other.clone();
+                by += &y;
+                let by = by.publicize();
+                *self -= x * &by;
+                *self -= y * &xa;
+                *self += xa * by;
+            }
             _ => self.val.mul_assign(other.val),
         };
         self.shared = self.shared || other.shared;
     }
 }
-impl<G, H, F: Mul<G, Output = H>> Mul<MpcVal<G>> for MpcVal<F> {
-    type Output = MpcVal<H>;
-    fn mul(self, other: MpcVal<G>) -> Self::Output {
+
+impl<F: Field + channel::Triple<F, F>> Mul<MpcVal<F>> for MpcVal<F> {
+    type Output = MpcVal<F>;
+    fn mul(mut self, other: MpcVal<F>) -> Self::Output {
         Self::Output::new(
             match (self.shared, other.shared) {
-                (true, true) => unimplemented!("ss mul"),
+                (true, true) => {
+                    // x * y = z
+                    let (x, y, z) = F::triple();
+                    let mut xa = std::mem::replace(&mut self, z);
+                    xa += &x;
+                    let xa = xa.publicize();
+                    let mut by = other.clone();
+                    by += &y;
+                    let by = by.publicize();
+                    self -= x * &by;
+                    self -= y * &xa;
+                    self += xa * by;
+                    self *= other;
+                    self.val
+                }
                 _ => self.val.mul(other.val),
             },
             self.shared || other.shared,
         )
     }
 }
-impl<'a, G, F: MulAssign<&'a G>> MulAssign<&'a MpcVal<G>> for MpcVal<F> {
-    fn mul_assign(&mut self, other: &'a MpcVal<G>) {
+
+impl<'a, F: Field + channel::Triple<F, F>> MulAssign<&'a MpcVal<F>> for MpcVal<F> {
+    fn mul_assign(&mut self, other: &'a MpcVal<F>) {
         match (self.shared, other.shared) {
-            (true, true) => unimplemented!("ss mul"),
+            (true, true) => {
+                // x * y = z
+                let (x, y, z) = F::triple();
+                let mut xa = std::mem::replace(self, z);
+                xa += &x;
+                let xa = xa.publicize();
+                let mut by = other.clone();
+                by += &y;
+                let by = by.publicize();
+                *self -= x * &by;
+                *self -= y * &xa;
+                *self += xa * by;
+            }
             _ => self.val.mul_assign(&other.val),
         };
         self.shared = self.shared || other.shared;
@@ -323,7 +357,7 @@ impl<F: Neg<Output = F>> Neg for MpcVal<F> {
     }
 }
 
-impl<F: ark_ff::One> ark_ff::One for MpcVal<F> {
+impl<F: Field> ark_ff::One for MpcVal<F> {
     fn one() -> Self {
         Self::from_public(F::one())
     }
@@ -357,7 +391,7 @@ impl<'a, F: 'a + ark_ff::Zero + Add<&'a F, Output = F> + Clone> ark_std::iter::S
         i.fold(MpcVal::zero(), Add::add)
     }
 }
-impl<F: ark_ff::One + Mul> ark_std::iter::Product<MpcVal<F>> for MpcVal<F> {
+impl<F: Field> ark_std::iter::Product<MpcVal<F>> for MpcVal<F> {
     fn product<I>(i: I) -> Self
     where
         I: Iterator<Item = MpcVal<F>>,
@@ -365,9 +399,7 @@ impl<F: ark_ff::One + Mul> ark_std::iter::Product<MpcVal<F>> for MpcVal<F> {
         i.fold(MpcVal::one(), Mul::mul)
     }
 }
-impl<'a, F: 'a + ark_ff::One + Mul<&'a F, Output = F>> ark_std::iter::Product<&'a MpcVal<F>>
-    for MpcVal<F>
-{
+impl<'a, F: 'a + Field> ark_std::iter::Product<&'a MpcVal<F>> for MpcVal<F> {
     fn product<I>(i: I) -> Self
     where
         I: Iterator<Item = &'a MpcVal<F>>,
@@ -634,61 +666,61 @@ shared_sqrt_field!(ark_bls12_377::Fq);
 // shared_field!(ark_bls12_377::Fq2);
 // shared_sqrt_field!(ark_bls12_377::Fq2);
 
-impl AffineCurve for MpcVal<ark_bls12_377::G1Affine> {
-    type ScalarField = MpcVal<ark_bls12_377::Fr>;
-    const COFACTOR: &'static [u64] = ark_bls12_377::G1Affine::COFACTOR;
-    type BaseField = MpcVal<ark_bls12_377::Fq>;
-    type Projective = MpcVal<ark_bls12_377::G1Projective>;
-    fn prime_subgroup_generator() -> Self {
-        todo!()
-    }
-    fn from_random_bytes(_: &[u8]) -> Option<Self> {
-        todo!()
-    }
-    fn mul<S: Into<<Self::ScalarField as PrimeField>::BigInt>>(
-        &self,
-        _: S,
-    ) -> <Self as AffineCurve>::Projective {
-        todo!()
-    }
-    fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
-        todo!()
-    }
-    fn mul_by_cofactor_inv(&self) -> Self {
-        todo!()
-    }
-}
-impl From<MpcVal<ark_bls12_377::G1Projective>> for MpcVal<ark_bls12_377::G1Affine> {
-    fn from(p: MpcVal<ark_bls12_377::G1Projective>) -> Self {
-        Self::new(p.val.into(), p.shared)
-    }
-}
-impl From<MpcVal<ark_bls12_377::G1Affine>> for MpcVal<ark_bls12_377::G1Projective> {
-    fn from(p: MpcVal<ark_bls12_377::G1Affine>) -> Self {
-        Self::new(p.val.into(), p.shared)
-    }
-}
-impl ProjectiveCurve for MpcVal<ark_bls12_377::G1Projective> {
-    const COFACTOR: &'static [u64] = ark_bls12_377::G1Projective::COFACTOR;
-    type ScalarField = MpcVal<ark_bls12_377::Fr>;
-    type BaseField = MpcVal<ark_bls12_377::Fq>;
-    type Affine = MpcVal<ark_bls12_377::G1Affine>;
-    fn prime_subgroup_generator() -> Self {
-        todo!()
-    }
-    fn batch_normalization(_: &mut [Self]) {
-        todo!()
-    }
-    fn is_normalized(&self) -> bool {
-        todo!()
-    }
-    fn double_in_place(&mut self) -> &mut Self {
-        todo!()
-    }
-    fn add_assign_mixed(&mut self, _: &<Self as ProjectiveCurve>::Affine) {
-        todo!()
-    }
-}
+//impl AffineCurve for MpcVal<ark_bls12_377::G1Affine> {
+//    type ScalarField = MpcVal<ark_bls12_377::Fr>;
+//    const COFACTOR: &'static [u64] = ark_bls12_377::G1Affine::COFACTOR;
+//    type BaseField = MpcVal<ark_bls12_377::Fq>;
+//    type Projective = MpcVal<ark_bls12_377::G1Projective>;
+//    fn prime_subgroup_generator() -> Self {
+//        todo!()
+//    }
+//    fn from_random_bytes(_: &[u8]) -> Option<Self> {
+//        todo!()
+//    }
+//    fn mul<S: Into<<Self::ScalarField as PrimeField>::BigInt>>(
+//        &self,
+//        _: S,
+//    ) -> <Self as AffineCurve>::Projective {
+//        todo!()
+//    }
+//    fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
+//        todo!()
+//    }
+//    fn mul_by_cofactor_inv(&self) -> Self {
+//        todo!()
+//    }
+//}
+//impl From<MpcVal<ark_bls12_377::G1Projective>> for MpcVal<ark_bls12_377::G1Affine> {
+//    fn from(p: MpcVal<ark_bls12_377::G1Projective>) -> Self {
+//        Self::new(p.val.into(), p.shared)
+//    }
+//}
+//impl From<MpcVal<ark_bls12_377::G1Affine>> for MpcVal<ark_bls12_377::G1Projective> {
+//    fn from(p: MpcVal<ark_bls12_377::G1Affine>) -> Self {
+//        Self::new(p.val.into(), p.shared)
+//    }
+//}
+//impl ProjectiveCurve for MpcVal<ark_bls12_377::G1Projective> {
+//    const COFACTOR: &'static [u64] = ark_bls12_377::G1Projective::COFACTOR;
+//    type ScalarField = MpcVal<ark_bls12_377::Fr>;
+//    type BaseField = MpcVal<ark_bls12_377::Fq>;
+//    type Affine = MpcVal<ark_bls12_377::G1Affine>;
+//    fn prime_subgroup_generator() -> Self {
+//        todo!()
+//    }
+//    fn batch_normalization(_: &mut [Self]) {
+//        todo!()
+//    }
+//    fn is_normalized(&self) -> bool {
+//        todo!()
+//    }
+//    fn double_in_place(&mut self) -> &mut Self {
+//        todo!()
+//    }
+//    fn add_assign_mixed(&mut self, _: &<Self as ProjectiveCurve>::Affine) {
+//        todo!()
+//    }
+//}
 //    type ScalarField: PrimeField + SquareRootField + Into<<Self::ScalarField
 // as PrimeField>::BigInt>;    type BaseField: Field;
 //    type Projective: ProjectiveCurve<Affine = Self, ScalarField =
@@ -761,5 +793,23 @@ impl PairingEngine for MpcPairingEngine<Bls12_377> {
     {
         // TODO: MPC!
         <Bls12_377 as PairingEngine>::pairing(p, q)
+    }
+}
+
+impl<
+        F: AddAssign<F>
+            + ark_serialize::CanonicalSerialize
+            + ark_serialize::CanonicalDeserialize
+            + Clone,
+    > MpcVal<F>
+{
+    pub fn publicize(self) -> Self {
+        if self.shared {
+            let mut other_val = channel::exchange(self.val.clone());
+            other_val += self.val;
+            Self::from_public(other_val)
+        } else {
+            self
+        }
     }
 }
