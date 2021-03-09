@@ -1,0 +1,32 @@
+[package]
+name = "mpc-algebra"
+version = "0.1.0"
+authors = ["Alex Ozdemir <aozdemir@hmc.edu>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "coord"
+path = "src/coord.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[dependencies]
+ark-ff = { git = "https://github.com/arkworks-rs/algebra", default-features = false }
+ark-bls12-377 = { git = "https://github.com/arkworks-rs/curves", default-features = false, features = ["curve"] }
+ark-ec = { git = "https://github.com/arkworks-rs/algebra", default-features = false }
+ark-serialize = { git = "https://github.com/arkworks-rs/algebra", default-features = false, features = [ "derive" ] }
+ark-std = { git = "https://github.com/arkworks-rs/utils", default-features = false }
+lazy_static = "1"
+derivative = { version = "2.0", features = ["use_core"], optional = true}
+
+rand = { version = "0.7", default-features = false }
+rayon = { version = "1", optional = true }
+zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
+conec = "0.2.0"
+tokio = {version = "0.2", features = ["macros", "io-util", "io-std", "time"]}
+rcgen = {version = "0.8" }
+tokio-serde = { version = "0.6", features = ["bincode"] }
+futures = "0.3"
