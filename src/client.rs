@@ -7,7 +7,6 @@ use ark_ff::{FftField, Field};
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
 use std::net::{ToSocketAddrs, SocketAddr};
-use std::str::FromStr;
 
 use mpc::channel;
 use mpc::MpcVal;

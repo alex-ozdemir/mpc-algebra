@@ -10,44 +10,48 @@ use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 lazy_static! {
-    static ref CH: Mutex<FieldChannel> = Mutex::new(FieldChannel {
-        stream: None,
-        id: "127.0.0.1:8000".parse().unwrap(),
-        other_id: "127.0.0.1:8000".parse().unwrap(),
-    });
-}
-
-fn tcp_send_slice(s: &mut TcpStream, v: &[u8]) {
-    let bytes = (v.len() as u64).to_ne_bytes();
-    s.write_all(&bytes[..]).unwrap();
-    s.write_all(v).unwrap();
-}
-
-fn tcp_recv_vec(s: &mut TcpStream) -> Vec<u8> {
-    let mut len = [0u8; 8];
-    s.read_exact(&mut len[..]).unwrap();
-    let mut bytes = vec![0u8; u64::from_ne_bytes(len) as usize];
-    s.read_exact(&mut bytes[..]).unwrap();
-    bytes
+    static ref CH: Mutex<FieldChannel> = Mutex::new(FieldChannel::default());
 }
 
 struct FieldChannel {
     /// Empty if unitialized
     stream: Option<TcpStream>,
-    id: SocketAddr,
-    other_id: SocketAddr,
+    self_addr: SocketAddr,
+    other_addr: SocketAddr,
+    bytes_sent: usize,
+    bytes_recv: usize,
+    talk_first: bool,
+}
+
+impl std::default::Default for FieldChannel {
+    fn default() -> Self {
+        Self {
+            stream: None,
+            self_addr: "127.0.0.1:8000".parse().unwrap(),
+            other_addr: "127.0.0.1:8000".parse().unwrap(),
+            bytes_sent: 0,
+            bytes_recv: 0,
+            talk_first: false,
+        }
+    }
 }
 
 impl FieldChannel {
-    pub fn new<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2, talk_first: bool) -> Self {
-        let id = self_.to_socket_addrs().unwrap().next().unwrap();
-        let other_id = peer.to_socket_addrs().unwrap().next().unwrap();
-        debug!("{} vs {}", id, other_id);
-        let stream = if talk_first {
+    fn connect<A1: ToSocketAddrs, A2: ToSocketAddrs>(
+        &mut self,
+        self_addr: A1,
+        other_addr: A2,
+        talk_first: bool,
+    ) {
+        self.self_addr = self_addr.to_socket_addrs().unwrap().next().unwrap();
+        self.other_addr = other_addr.to_socket_addrs().unwrap().next().unwrap();
+        self.talk_first = talk_first;
+        debug!("I am {}, connecting to {}", self.self_addr, self.other_addr);
+        self.stream = Some(if talk_first {
             debug!("Attempting to contact peer");
             loop {
                 let mut ms_waited = 0;
-                match TcpStream::connect(other_id) {
+                match TcpStream::connect(self.other_addr) {
                     Ok(s) => break s,
                     Err(e) => {
                         if e.kind() == std::io::ErrorKind::ConnectionRefused {
@@ -65,32 +69,45 @@ impl FieldChannel {
                 }
             }
         } else {
-            let listener = TcpListener::bind(id).unwrap();
+            let listener = TcpListener::bind(self.self_addr).unwrap();
             debug!("Waiting for peer to contact us");
             let (stream, _addr) = listener.accept().unwrap();
             stream
-        };
-        debug!("Connected");
-        FieldChannel {
-            stream: Some(stream),
-            id,
-            other_id,
-        }
+        });
     }
     fn stream(&mut self) -> &mut TcpStream {
         self.stream
             .as_mut()
-            .expect("Unitialized FieldChannel. Did you forget mpc_init(..)?")
+            .expect("Unitialized FieldChannel. Did you forget init(..)?")
     }
+
+    fn send_slice(&mut self, v: &[u8]) {
+        let s = self.stream();
+        let bytes = (v.len() as u64).to_ne_bytes();
+        s.write_all(&bytes[..]).unwrap();
+        s.write_all(v).unwrap();
+        self.bytes_sent += bytes.len() + v.len();
+    }
+
+    fn recv_vec(&mut self) -> Vec<u8> {
+        let s = self.stream();
+        let mut len = [0u8; 8];
+        s.read_exact(&mut len[..]).unwrap();
+        let mut bytes = vec![0u8; u64::from_ne_bytes(len) as usize];
+        s.read_exact(&mut bytes[..]).unwrap();
+        self.bytes_recv += bytes.len() + len.len();
+        bytes
+    }
+
     fn exchange<F: CanonicalSerialize + CanonicalDeserialize>(&mut self, f: F) -> F {
         let mut bytes_out = Vec::new();
         f.serialize(&mut bytes_out).unwrap();
-        let bytes_in = if &self.id < &self.other_id {
-            tcp_send_slice(self.stream(), &bytes_out[..]);
-            tcp_recv_vec(self.stream())
+        let bytes_in = if self.talk_first {
+            self.send_slice(&bytes_out[..]);
+            self.recv_vec()
         } else {
-            let bytes_in = tcp_recv_vec(&mut self.stream());
-            tcp_send_slice(&mut self.stream(), &bytes_out[..]);
+            let bytes_in = self.recv_vec();
+            self.send_slice(&bytes_out[..]);
             bytes_in
         };
         F::deserialize(&bytes_in[..]).unwrap()
@@ -102,9 +119,9 @@ pub fn init<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2, talk_firs
     let mut ch = CH.lock().unwrap();
     assert!(
         ch.stream.is_none(),
-        "FieldChannel should no be re-intialized. Did you call mpc_init(..) twice?"
+        "FieldChannel should no be re-intialized. Did you call init(..) twice?"
     );
-    *ch = FieldChannel::new(self_, peer, talk_first);
+    ch.connect(self_, peer, talk_first);
 }
 
 /// Exchange serializable element with the other party.
@@ -114,20 +131,27 @@ pub fn exchange<F: CanonicalSerialize + CanonicalDeserialize>(f: F) -> F {
 
 /// Are you the first party in the MPC?
 pub fn am_first() -> bool {
-    let c = CH.lock().expect("Poisoned FieldChannel");
-    c.id < c.other_id
+    CH.lock().expect("Poisoned FieldChannel").talk_first
 }
 
 pub type Triple<F, G, H> = (MpcVal<F>, MpcVal<G>, MpcVal<H>);
 
 /// Get a field triple
 pub fn field_triple<F: Field>() -> Triple<F, F, F> {
-    //TODO: fix
-    (
-        MpcVal::from_shared(F::from(0u8)),
-        MpcVal::from_shared(F::from(0u8)),
-        MpcVal::from_shared(F::from(0u8)),
-    )
+    //TODO
+    if am_first() {
+        (
+            MpcVal::from_shared(F::from(1u8)),
+            MpcVal::from_shared(F::from(1u8)),
+            MpcVal::from_shared(F::from(1u8)),
+        )
+    } else {
+        (
+            MpcVal::from_shared(F::from(0u8)),
+            MpcVal::from_shared(F::from(0u8)),
+            MpcVal::from_shared(F::from(0u8)),
+        )
+    }
 }
 
 //impl<F: Field, C: AffineCurve<ScalarField=F>> Triple<F, C> for C {
