@@ -6,7 +6,7 @@ use ark_bls12_377::Fr;
 use ark_ff::{FftField, Field};
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
-use std::net::ToSocketAddrs;
+use std::net::{ToSocketAddrs, SocketAddr};
 use std::str::FromStr;
 
 use mpc::channel;
@@ -22,12 +22,16 @@ struct Opt {
     #[structopt(short, long)]
     debug: bool,
 
+    /// Your host
+    #[structopt(long,default_value = "localhost")]
+    host: String,
+
     /// Your port
     #[structopt(long,default_value = "8000")]
     port: u16,
 
     /// Peer host
-    #[structopt()]
+    #[structopt(long)]
     peer_host: String,
 
     /// Peer port
@@ -68,8 +72,8 @@ fn main() -> () {
     } else {
         env_logger::init();
     }
-    let self_addr = ("localhost", opt.port).to_socket_addrs().unwrap().next().unwrap();
-    let peer_addr = (opt.peer_host, opt.peer_port).to_socket_addrs().unwrap().next().unwrap();
+    let self_addr = (opt.host, opt.port).to_socket_addrs().unwrap().filter(SocketAddr::is_ipv4).next().unwrap();
+    let peer_addr = (opt.peer_host, opt.peer_port).to_socket_addrs().unwrap().filter(SocketAddr::is_ipv4).next().unwrap();
     channel::init(self_addr, peer_addr);
     debug!("Start");
     let a = MFr::from_shared(Fr::from(opt.a));

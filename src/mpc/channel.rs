@@ -38,8 +38,6 @@ struct FieldChannel {
     other_id: SocketAddr,
 }
 
-const HOST: &str = "localhost";
-
 impl FieldChannel {
     pub fn new<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2) -> Self {
         let id = self_.to_socket_addrs().unwrap().next().unwrap();
