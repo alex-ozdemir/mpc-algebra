@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use log::debug;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 
 use super::MpcVal;
@@ -12,8 +12,8 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 lazy_static! {
     static ref CH: Mutex<FieldChannel> = Mutex::new(FieldChannel {
         stream: None,
-        id: 0,
-        other_id: 0,
+        id: "127.0.0.1:8000".parse().unwrap(),
+        other_id: "127.0.0.1:8000".parse().unwrap(),
     });
 }
 
@@ -34,26 +34,41 @@ fn tcp_recv_vec(s: &mut TcpStream) -> Vec<u8> {
 struct FieldChannel {
     /// Empty if unitialized
     stream: Option<TcpStream>,
-    id: u16,
-    other_id: u16,
+    id: SocketAddr,
+    other_id: SocketAddr,
 }
 
 const HOST: &str = "localhost";
 
 impl FieldChannel {
-    fn new(id: u16, other_id: u16) -> Self {
+    pub fn new<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2) -> Self {
+        let id = self_.to_socket_addrs().unwrap().next().unwrap();
+        let other_id = peer.to_socket_addrs().unwrap().next().unwrap();
+        debug!("{} vs {}", id, other_id);
         let stream = if id < other_id {
-            debug!("Waiting for peer");
+            debug!("Attempting to contact peer");
             loop {
-                if let Ok(s) = TcpStream::connect((HOST, other_id)) {
-                    break s;
-                } else {
-                    std::thread::sleep(std::time::Duration::from_secs(1))
+                let mut ms_waited = 0;
+                match TcpStream::connect(other_id) {
+                    Ok(s) => break s,
+                    Err(e) => {
+                        if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                            ms_waited += 100;
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                            if ms_waited % 3_000 == 0 {
+                                debug!("Still waiting");
+                            } else if ms_waited > 30_000 {
+                                panic!("Could not find peer in 30s");
+                            }
+                        } else {
+                            panic!("Error during FieldChannel::new: {}", e);
+                        }
+                    }
                 }
             }
         } else {
-            let listener = TcpListener::bind((HOST, id)).unwrap();
-            debug!("Waiting for peer");
+            let listener = TcpListener::bind(id).unwrap();
+            debug!("Waiting for peer to contact us");
             let (stream, _addr) = listener.accept().unwrap();
             stream
         };
@@ -84,38 +99,39 @@ impl FieldChannel {
     }
 }
 
-pub fn init(id: u16, other_id: u16) {
+/// Initialize the MPC
+pub fn init<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2) {
     let mut ch = CH.lock().unwrap();
     assert!(
         ch.stream.is_none(),
         "FieldChannel should no be re-intialized. Did you call mpc_init(..) twice?"
     );
-    *ch = FieldChannel::new(id, other_id);
+    *ch = FieldChannel::new(self_, peer);
 }
 
+/// Exchange serializable element with the other party.
 pub fn exchange<F: CanonicalSerialize + CanonicalDeserialize>(f: F) -> F {
     CH.lock().expect("Poisoned FieldChannel").exchange(f)
 }
 
+/// Are you the first party in the MPC?
 pub fn am_first() -> bool {
     let c = CH.lock().expect("Poisoned FieldChannel");
     c.id < c.other_id
 }
 
-pub trait Triple<G, H>: Sized {
-    fn triple() -> (MpcVal<Self>, MpcVal<G>, MpcVal<H>);
+pub type Triple<F, G, H> = (MpcVal<F>, MpcVal<G>, MpcVal<H>);
+
+/// Get a field triple
+pub fn field_triple<F: Field>() -> Triple<F, F, F> {
+    //TODO: fix
+    (
+        MpcVal::from_shared(F::from(0u8)),
+        MpcVal::from_shared(F::from(0u8)),
+        MpcVal::from_shared(F::from(0u8)),
+    )
 }
 
-impl<F: Field> Triple<F, F> for F {
-    fn triple() -> (MpcVal<Self>, MpcVal<F>, MpcVal<F>) {
-        //TODO: fix
-        (
-            MpcVal::from_shared(F::from(0u8)),
-            MpcVal::from_shared(F::from(0u8)),
-            MpcVal::from_shared(F::from(0u8)),
-        )
-    }
-}
 //impl<F: Field, C: AffineCurve<ScalarField=F>> Triple<F, C> for C {
 //    fn triple() -> (MpcVal<Self>, MpcVal<F>, MpcVal<F>) {
 //        //TODO: fix

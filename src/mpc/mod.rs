@@ -235,12 +235,12 @@ impl<'a, F: Sub<&'a F, Output = F> + Clone + Neg<Output = F>> Sub<&'a MpcVal<F>>
     }
 }
 
-impl<F: Field + channel::Triple<F, F>> MulAssign<MpcVal<F>> for MpcVal<F> {
+impl<F: Field> MulAssign<MpcVal<F>> for MpcVal<F> {
     fn mul_assign(&mut self, other: MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, true) => {
                 // x * y = z
-                let (x, y, z) = F::triple();
+                let (x, y, z) = channel::field_triple();
                 let mut xa = std::mem::replace(self, z);
                 xa += &x;
                 let xa = xa.publicize();
@@ -257,14 +257,14 @@ impl<F: Field + channel::Triple<F, F>> MulAssign<MpcVal<F>> for MpcVal<F> {
     }
 }
 
-impl<F: Field + channel::Triple<F, F>> Mul<MpcVal<F>> for MpcVal<F> {
+impl<F: Field> Mul<MpcVal<F>> for MpcVal<F> {
     type Output = MpcVal<F>;
     fn mul(mut self, other: MpcVal<F>) -> Self::Output {
         Self::Output::new(
             match (self.shared, other.shared) {
                 (true, true) => {
                     // x * y = z
-                    let (x, y, z) = F::triple();
+                    let (x, y, z) = channel::field_triple();
                     let mut xa = std::mem::replace(&mut self, z);
                     xa += &x;
                     let xa = xa.publicize();
@@ -284,12 +284,12 @@ impl<F: Field + channel::Triple<F, F>> Mul<MpcVal<F>> for MpcVal<F> {
     }
 }
 
-impl<'a, F: Field + channel::Triple<F, F>> MulAssign<&'a MpcVal<F>> for MpcVal<F> {
+impl<'a, F: Field> MulAssign<&'a MpcVal<F>> for MpcVal<F> {
     fn mul_assign(&mut self, other: &'a MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, true) => {
                 // x * y = z
-                let (x, y, z) = F::triple();
+                let (x, y, z) = channel::field_triple();
                 let mut xa = std::mem::replace(self, z);
                 xa += &x;
                 let xa = xa.publicize();
