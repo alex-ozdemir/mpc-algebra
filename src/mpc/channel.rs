@@ -39,11 +39,11 @@ struct FieldChannel {
 }
 
 impl FieldChannel {
-    pub fn new<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2) -> Self {
+    pub fn new<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2, talk_first: bool) -> Self {
         let id = self_.to_socket_addrs().unwrap().next().unwrap();
         let other_id = peer.to_socket_addrs().unwrap().next().unwrap();
         debug!("{} vs {}", id, other_id);
-        let stream = if id < other_id {
+        let stream = if talk_first {
             debug!("Attempting to contact peer");
             loop {
                 let mut ms_waited = 0;
@@ -98,13 +98,13 @@ impl FieldChannel {
 }
 
 /// Initialize the MPC
-pub fn init<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2) {
+pub fn init<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2, talk_first: bool) {
     let mut ch = CH.lock().unwrap();
     assert!(
         ch.stream.is_none(),
         "FieldChannel should no be re-intialized. Did you call mpc_init(..) twice?"
     );
-    *ch = FieldChannel::new(self_, peer);
+    *ch = FieldChannel::new(self_, peer, talk_first);
 }
 
 /// Exchange serializable element with the other party.

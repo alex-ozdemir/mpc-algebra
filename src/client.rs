@@ -38,6 +38,10 @@ struct Opt {
     #[structopt(long,default_value = "8000")]
     peer_port: u16,
 
+    /// Which party are you? 0 or 1?
+    #[structopt(long,default_value = "0")]
+    party: u8,
+
     /// Input a
     #[structopt()]
     a: u64,
@@ -74,7 +78,7 @@ fn main() -> () {
     }
     let self_addr = (opt.host, opt.port).to_socket_addrs().unwrap().filter(SocketAddr::is_ipv4).next().unwrap();
     let peer_addr = (opt.peer_host, opt.peer_port).to_socket_addrs().unwrap().filter(SocketAddr::is_ipv4).next().unwrap();
-    channel::init(self_addr, peer_addr);
+    channel::init(self_addr, peer_addr, opt.party == 0);
     debug!("Start");
     let a = MFr::from_shared(Fr::from(opt.a));
     let b = MFr::from_shared(Fr::from(opt.b));
