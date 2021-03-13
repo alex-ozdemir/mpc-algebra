@@ -20,6 +20,7 @@ struct FieldChannel {
     other_addr: SocketAddr,
     bytes_sent: usize,
     bytes_recv: usize,
+    exchanges: usize,
     talk_first: bool,
 }
 
@@ -31,6 +32,7 @@ impl std::default::Default for FieldChannel {
             other_addr: "127.0.0.1:8000".parse().unwrap(),
             bytes_sent: 0,
             bytes_recv: 0,
+            exchanges: 0,
             talk_first: false,
         }
     }
@@ -110,7 +112,28 @@ impl FieldChannel {
             self.send_slice(&bytes_out[..]);
             bytes_in
         };
+        self.exchanges += 1;
         F::deserialize(&bytes_in[..]).unwrap()
+    }
+
+    fn exchange_bytes(&mut self, f: Vec<u8>) -> Vec<u8> {
+        self.exchanges += 1;
+        if self.talk_first {
+            self.send_slice(&f[..]);
+            self.recv_vec()
+        } else {
+            let bytes_in = self.recv_vec();
+            self.send_slice(&f[..]);
+            bytes_in
+        }
+    }
+
+    fn stats(&self) -> ChannelStats {
+        ChannelStats {
+            bytes_recv: self.bytes_recv,
+            bytes_sent: self.bytes_sent,
+            exchanges: self.exchanges,
+        }
     }
 }
 
@@ -127,6 +150,11 @@ pub fn init<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2, talk_firs
 /// Exchange serializable element with the other party.
 pub fn exchange<F: CanonicalSerialize + CanonicalDeserialize>(f: F) -> F {
     CH.lock().expect("Poisoned FieldChannel").exchange(f)
+}
+
+/// Exchange serializable element with the other party.
+pub fn exchange_bytes(f: Vec<u8>) -> Vec<u8> {
+    CH.lock().expect("Poisoned FieldChannel").exchange_bytes(f)
 }
 
 /// Are you the first party in the MPC?
@@ -167,4 +195,15 @@ pub fn field_triple<F: Field>() -> Triple<F, F, F> {
 
 pub fn deinit() {
     CH.lock().expect("Poisoned FieldChannel").stream = None;
+}
+
+#[derive(Debug)]
+pub struct ChannelStats {
+    pub bytes_sent: usize,
+    pub bytes_recv: usize,
+    pub exchanges: usize,
+}
+
+pub fn stats() -> ChannelStats {
+    CH.lock().expect("Poisoned FieldChannel").stats()
 }

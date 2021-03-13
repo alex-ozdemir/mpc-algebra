@@ -4,14 +4,29 @@ mod mpc;
 
 use ark_bls12_377::Fr;
 use ark_ff::{FftField, Field};
+use ark_serialize::CanonicalSerialize;
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
-use std::net::{ToSocketAddrs, SocketAddr};
+use std::net::{SocketAddr, ToSocketAddrs};
 
 use mpc::channel;
 use mpc::MpcVal;
+use mpc::ComField;
 
+use clap::arg_enum;
 use structopt::StructOpt;
+use merlin::Transcript;
+
+arg_enum! {
+    #[derive(PartialEq, Debug)]
+    pub enum Computation {
+        Fft,
+        Sum,
+        Product,
+        Commit,
+        Merkle,
+    }
+}
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "client", about = "An example MPC")]
@@ -22,11 +37,11 @@ struct Opt {
     debug: bool,
 
     /// Your host
-    #[structopt(long,default_value = "localhost")]
+    #[structopt(long, default_value = "localhost")]
     host: String,
 
     /// Your port
-    #[structopt(long,default_value = "8000")]
+    #[structopt(long, default_value = "8000")]
     port: u16,
 
     /// Peer host
@@ -34,35 +49,78 @@ struct Opt {
     peer_host: String,
 
     /// Peer port
-    #[structopt(long,default_value = "8000")]
+    #[structopt(long, default_value = "8000")]
     peer_port: u16,
 
     /// Which party are you? 0 or 1?
-    #[structopt(long,default_value = "0")]
+    #[structopt(long, default_value = "0")]
     party: u8,
+
+    /// Computation to perform
+    #[structopt()]
+    computation: Computation,
 
     /// Input a
     #[structopt()]
-    a: u64,
-
-    /// Input b
-    #[structopt()]
-    b: u64,
+    args: Vec<u64>,
 }
 
-fn computation<F: Field>(mut a: F, b: F) -> F {
-    a *= &b;
-    a
-}
-
-fn fft_computation<F: FftField>(mut vs: Vec<F>) -> Vec<F> {
-    let d = Radix2EvaluationDomain::<F>::new(4).unwrap();
-    for (i, v) in vs.iter().enumerate() {
-        println!("  {}: {}", i, v);
+impl Computation {
+    fn run<F: ComField>(&self, mut inputs: Vec<F>) -> Vec<F> {
+        println!("Inputs:");
+        for (i, v) in inputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+        let outputs = match self {
+            Computation::Fft => {
+                let d = Radix2EvaluationDomain::<F>::new(inputs.len()).unwrap();
+                d.ifft_in_place(&mut inputs);
+                inputs
+            }
+            Computation::Sum => {
+                vec![inputs.into_iter().fold(F::from(0u32), std::ops::Add::add)]
+            }
+            Computation::Product => {
+                assert_eq!(inputs.len(), 2);
+                vec![inputs[0] * inputs[1]]
+            }
+            Computation::Commit => {
+                let mut t = Transcript::new(b"commit");
+                for i in &inputs {
+                    let mut bytes = Vec::new();
+                    i.serialize(&mut bytes).unwrap();
+                    t.append_message(b"input", &bytes);
+                }
+                let mut challenge_bytes = vec![0u8; 64];
+                t.challenge_bytes(b"challenge", &mut challenge_bytes);
+                let c = F::from_random_bytes(&challenge_bytes).expect("Couldn't sample");
+                vec![c]
+            }
+            Computation::Merkle => {
+                let mut t = Transcript::new(b"merkle");
+                let (k, c) = F::commit(&inputs[..]);
+                let mut bytes = Vec::new();
+                c.serialize(&mut bytes).unwrap();
+                t.append_message(b"commitment", &bytes);
+                let mut challenge_bytes: [u8; 8] = [0,0,0,0,0,0,0,0];
+                t.challenge_bytes(b"challenge", &mut challenge_bytes[..]);
+                let n = u64::from_be_bytes(challenge_bytes) as usize;
+                let i = n % inputs.len();
+                println!("Query at: {}", i);
+                let (value, pf) = F::open_at(&inputs[..], &k, i);
+                let v = F::check_opening(&c, pf, i, value);
+                println!("Valid proof: {}", v);
+                vec![]
+            }
+        };
+        println!("Outputs:");
+        for (i, v) in outputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+        outputs
     }
-    d.ifft_in_place(&mut vs);
-    vs
 }
+
 
 type MFr = MpcVal<Fr>;
 
@@ -75,81 +133,28 @@ fn main() -> () {
     } else {
         env_logger::init();
     }
-    let self_addr = (opt.host, opt.port).to_socket_addrs().unwrap().filter(SocketAddr::is_ipv4).next().unwrap();
-    let peer_addr = (opt.peer_host, opt.peer_port).to_socket_addrs().unwrap().filter(SocketAddr::is_ipv4).next().unwrap();
+    let self_addr = (opt.host, opt.port)
+        .to_socket_addrs()
+        .unwrap()
+        .filter(SocketAddr::is_ipv4)
+        .next()
+        .unwrap();
+    let peer_addr = (opt.peer_host, opt.peer_port)
+        .to_socket_addrs()
+        .unwrap()
+        .filter(SocketAddr::is_ipv4)
+        .next()
+        .unwrap();
     channel::init(self_addr, peer_addr, opt.party == 0);
     debug!("Start");
-    let a = MFr::from_shared(Fr::from(opt.a));
-    let b = MFr::from_shared(Fr::from(opt.b));
-    let c = computation(a, b);
-    println!("c: {}", c);
-    let cc = c.publicize();
-    println!("cc: {}", cc);
-    let mut vs = fft_computation(vec![a, a, a, a]);
-    for v in &mut vs {
-        *v = v.publicize();
-    }
-    for (i, v) in vs.iter().enumerate() {
+    let inputs = opt.args.iter().map(|i| MFr::from_shared(Fr::from(*i))).collect::<Vec<MFr>>();
+    let outputs = opt.computation.run(inputs);
+    let public_outputs = outputs.into_iter().map(|c| c.publicize()).collect::<Vec<_>>();
+    println!("Public Outputs:");
+    for (i, v) in public_outputs.iter().enumerate() {
         println!("  {}: {}", i, v);
     }
-    //let stdin = std::io::stdin();
-    //for l in stdin.lock().lines().map(|l| l.unwrap()) {
-    //    let token = l.trim();
-    //    debug!("Line: {}", token);
-    //    let field_elem = Fr::from_str(&token).unwrap();
-    //    debug!("F: {:?}", field_elem);
-    //    let field_elem2 = channel::exchange(field_elem);
-    //    debug!("F: {:?}", field_elem2);
-    //}
+    debug!("Stats: {:#?}", channel::stats());
     channel::deinit();
     debug!("Done");
-
-    //    let coord = "localhost".to_owned();
-    //    let (mut client, mut incoming) = {
-    //        let mut client_cfg = ClientConfig::new(id.clone(), coord);
-    //        let mut cert_path = std::env::temp_dir();
-    //        cert_path.push("cert.der");
-    //        client_cfg.set_ca(
-    //            Certificate::from_der(&std::fs::read(cert_path).unwrap())
-    //                .expect("could not find cert file at /tmp/cert.der"),
-    //        );
-    //        conec::Client::new(client_cfg).await.unwrap()
-    //    };
-    //    let (send, recv) = if &id < &other_id {
-    //        eprintln!("Initiating");
-    //        client.new_stream(other_id).await.unwrap()
-    //    } else {
-    //        eprintln!("Waiting");
-    //        let (_, _, send, recv) = incoming.next().await.unwrap();
-    //        (send, recv)
-    //    };
-    //    eprintln!("Go ahead and type.");
-    //    let rfut =
-    //        SymmetricallyFramed::new(recv, SymmetricalBincode::<Vec<u8>>::default()).for_each(|s| {
-    //            let bytes = s.unwrap();
-    //            let field_elem = Fr::deserialize(&bytes[..]).unwrap();
-    //            println!("---> {:?}", field_elem);
-    //            future::ready(())
-    //        });
-    //
-    //    let stdin = tokio::io::BufReader::new(tokio::io::stdin());
-    //    let sfut = stdin
-    //        .lines()
-    //        .map(|s| {
-    //            let field_elem = Fr::from_str(&s.unwrap().trim()).unwrap();
-    //            let mut bytes = Vec::new();
-    //            field_elem.serialize(&mut bytes).unwrap();
-    //            println!("---> {:?}", field_elem);
-    //            Ok(bytes)
-    //        })
-    //        .forward(SymmetricallyFramed::new(
-    //            send,
-    //            SymmetricalBincode::<Vec<u8>>::default(),
-    //        ))
-    //        .then(|sf| async {
-    //            sf.ok();
-    //            eprintln!("*** STDIN closed.");
-    //        });
-    //
-    //    futures::future::join(sfut, rfut).await;
 }

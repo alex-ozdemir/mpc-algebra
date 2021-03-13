@@ -4,7 +4,10 @@ use ark_ec::PairingEngine;
 use ark_ff::{FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
 use ark_serialize::*;
 use ark_std::UniformRand;
+use log::debug;
 use rand::prelude::*;
+use sha2::Digest;
+use std::borrow::Cow;
 use std::ops::*;
 
 pub mod channel;
@@ -407,19 +410,30 @@ impl<'a, F: 'a + Field> ark_std::iter::Product<&'a MpcVal<F>> for MpcVal<F> {
         i.fold(MpcVal::one(), Mul::mul)
     }
 }
-impl<F: ark_serialize::CanonicalSerialize> ark_serialize::CanonicalSerialize for MpcVal<F> {
+impl<
+        F: AddAssign<F>
+            + ark_serialize::CanonicalSerialize
+            + ark_serialize::CanonicalDeserialize
+            + Clone,
+    > ark_serialize::CanonicalSerialize for MpcVal<F>
+{
     fn serialize<W>(&self, w: W) -> std::result::Result<(), ark_serialize::SerializationError>
     where
         W: ark_serialize::Write,
     {
-        assert!(!self.shared);
-        self.val.serialize(w)
+        self.publicize_cow().val.serialize(w)
     }
     fn serialized_size(&self) -> usize {
         self.val.serialized_size()
     }
 }
-impl<F: ark_serialize::CanonicalDeserialize> ark_serialize::CanonicalDeserialize for MpcVal<F> {
+impl<
+        F: AddAssign<F>
+            + ark_serialize::CanonicalSerialize
+            + ark_serialize::CanonicalDeserialize
+            + Clone,
+    > ark_serialize::CanonicalDeserialize for MpcVal<F>
+{
     fn deserialize<R>(r: R) -> std::result::Result<Self, ark_serialize::SerializationError>
     where
         R: ark_serialize::Read,
@@ -427,8 +441,12 @@ impl<F: ark_serialize::CanonicalDeserialize> ark_serialize::CanonicalDeserialize
         F::deserialize(r).map(MpcVal::from_public)
     }
 }
-impl<F: ark_serialize::CanonicalDeserializeWithFlags> ark_serialize::CanonicalDeserializeWithFlags
-    for MpcVal<F>
+impl<
+        F: AddAssign<F>
+            + ark_serialize::CanonicalSerialize
+            + ark_serialize::CanonicalDeserializeWithFlags
+            + Clone,
+    > ark_serialize::CanonicalDeserializeWithFlags for MpcVal<F>
 {
     fn deserialize_with_flags<R, Fl>(
         r: R,
@@ -440,8 +458,13 @@ impl<F: ark_serialize::CanonicalDeserializeWithFlags> ark_serialize::CanonicalDe
         F::deserialize_with_flags(r).map(|(s, f)| (MpcVal::from_public(s), f))
     }
 }
-impl<F: ark_serialize::CanonicalSerializeWithFlags> ark_serialize::CanonicalSerializeWithFlags
-    for MpcVal<F>
+
+impl<
+        F: AddAssign<F>
+            + ark_serialize::CanonicalSerializeWithFlags
+            + ark_serialize::CanonicalDeserialize
+            + Clone,
+    > ark_serialize::CanonicalSerializeWithFlags for MpcVal<F>
 {
     fn serialize_with_flags<W, Fl>(
         &self,
@@ -452,8 +475,7 @@ impl<F: ark_serialize::CanonicalSerializeWithFlags> ark_serialize::CanonicalSeri
         W: ark_serialize::Write,
         Fl: Flags,
     {
-        assert!(!self.shared);
-        self.val.serialize_with_flags(w, f)
+        self.publicize_cow().val.serialize_with_flags(w, f)
     }
     fn serialized_size_with_flags<Fl>(&self) -> usize
     where
@@ -811,5 +833,138 @@ impl<
         } else {
             self
         }
+    }
+}
+
+impl<
+        F: AddAssign<F>
+            + ark_serialize::CanonicalSerialize
+            + ark_serialize::CanonicalDeserialize
+            + Clone,
+    > MpcVal<F>
+{
+    pub fn publicize_cow<'a>(&'a self) -> Cow<'a, Self> {
+        if self.shared {
+            let mut other_val = channel::exchange(self.val.clone());
+            other_val += self.val.clone();
+            Cow::Owned(Self::from_public(other_val))
+        } else {
+            Cow::Borrowed(self)
+        }
+    }
+}
+
+/// Vector-Commitable Field
+pub trait ComField: FftField {
+    type Commitment: ark_serialize::CanonicalSerialize;
+    type Key;
+    type OpeningProof;
+    fn commit(vs: &[Self]) -> (Self::Key, Self::Commitment);
+    fn open_at(vs: &[Self], key: &Self::Key, i: usize) -> (Self, Self::OpeningProof);
+    fn check_opening(c: &Self::Commitment, p: Self::OpeningProof, i: usize, v: Self) -> bool;
+}
+
+impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
+    type Commitment = (Vec<u8>, Vec<u8>);
+    type Key = Vec<Vec<Vec<u8>>>;
+    type OpeningProof = (
+        <Bls12_377 as PairingEngine>::Fr,
+        <Bls12_377 as PairingEngine>::Fr,
+        Vec<(Vec<u8>, Vec<u8>)>,
+    );
+    fn commit(vs: &[Self]) -> (Self::Key, Self::Commitment) {
+        let mut tree = Vec::new();
+        let mut hashes: Vec<Vec<u8>> = vs
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| {
+                let mut bytes_out = Vec::new();
+                v.val.serialize(&mut bytes_out).unwrap();
+                let o = sha2::Sha256::digest(&bytes_out[..]).as_slice().to_owned();
+                debug!("Hash {} {}: {:?}", vs.len(), i, o);
+                o
+            })
+            .collect();
+        assert!(hashes.len().is_power_of_two());
+        while hashes.len() > 1 {
+            let n = hashes.len() / 2;
+            let mut new = Vec::new();
+            for i in 0..n {
+                let mut h = sha2::Sha256::default();
+                h.update(&hashes[2 * i]);
+                h.update(&hashes[2 * i + 1]);
+                new.push(h.finalize().as_slice().to_owned());
+                debug!("Hash {} {}: {:?}", hashes.len() / 2, i, new[new.len() - 1]);
+            }
+            tree.push(std::mem::replace(&mut hashes, new));
+        }
+        let slf = hashes.pop().unwrap();
+        let other = channel::exchange_bytes(slf.clone());
+        if channel::am_first() {
+            (tree, (other, slf))
+        } else {
+            (tree, (slf, other))
+        }
+    }
+    fn open_at(inputs: &[Self], tree: &Self::Key, mut i: usize) -> (Self, Self::OpeningProof) {
+        let self_f = inputs[i].val.clone();
+        let other_f = channel::exchange(self_f.clone());
+        let mut siblings = Vec::new();
+        for level in 0..tree.len() {
+            debug!("sib {}: {:?}", level, tree[level][i^1]);
+            siblings.push(tree[level][i ^ 1].clone());
+            i /= 2;
+        }
+        assert_eq!(i / 2, 0);
+        let other = siblings
+            .clone()
+            .into_iter()
+            .map(|s| channel::exchange_bytes(s));
+        let p = if channel::am_first() {
+            siblings.into_iter().zip(other.into_iter()).collect()
+        } else {
+            other.into_iter().zip(siblings.into_iter()).collect()
+        };
+        (
+            MpcVal::from_public(self_f + other_f),
+            if channel::am_first() {
+                (self_f, other_f, p)
+            } else {
+                (other_f, self_f, p)
+            },
+        )
+    }
+    fn check_opening(c: &Self::Commitment, p: Self::OpeningProof, i: usize, v: Self) -> bool {
+        if p.0 + p.1 != v.val {
+            return false;
+        }
+        let mut hash0 = Vec::new();
+        p.0.serialize(&mut hash0).unwrap();
+        hash0 = sha2::Sha256::digest(&hash0).as_slice().to_owned();
+        let mut hash1 = Vec::new();
+        p.1.serialize(&mut hash1).unwrap();
+        hash1 = sha2::Sha256::digest(&hash1).as_slice().to_owned();
+        debug!("Hash init0: {:?}", hash0);
+        debug!("Hash init1: {:?}", hash1);
+        for (j, (sib0, sib1)) in p.2.into_iter().enumerate() {
+            let mut h0 = sha2::Sha256::default();
+            let mut h1 = sha2::Sha256::default();
+            if (i >> j) & 1 == 0 {
+                h0.update(&hash0);
+                h0.update(&sib0);
+                h1.update(&hash1);
+                h1.update(&sib1);
+            } else {
+                h0.update(&sib0);
+                h0.update(&hash0);
+                h1.update(&sib1);
+                h1.update(&hash1);
+            }
+            hash0 = h0.finalize().as_slice().to_owned();
+            hash1 = h1.finalize().as_slice().to_owned();
+            debug!("Hash0: {:?}", hash0);
+            debug!("Hash1: {:?}", hash1);
+        }
+        &(hash1, hash0) == c
     }
 }
