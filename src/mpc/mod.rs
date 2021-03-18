@@ -860,6 +860,7 @@ pub trait ComField: FftField {
     type Commitment: ark_serialize::CanonicalSerialize;
     type Key;
     type OpeningProof: ark_serialize::CanonicalSerialize;
+    fn publicize(self) -> Self;
     fn commit(vs: &[Self]) -> (Self::Key, Self::Commitment);
     fn open_at(vs: &[Self], key: &Self::Key, i: usize) -> (Self, Self::OpeningProof);
     fn check_opening(c: &Self::Commitment, p: Self::OpeningProof, i: usize, v: Self) -> bool;
@@ -873,6 +874,9 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
         <Bls12_377 as PairingEngine>::Fr,
         Vec<(Vec<u8>, Vec<u8>)>,
     );
+    fn publicize(self) -> Self {
+        self.publicize()
+    }
     fn commit(vs: &[Self]) -> (Self::Key, Self::Commitment) {
         let mut tree = Vec::new();
         let mut hashes: Vec<Vec<u8>> = vs

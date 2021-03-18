@@ -125,7 +125,7 @@ impl Computation {
                 let mut commitments = Vec::new();
                 let mut alphas = Vec::new();
                 println!("k: {}", k);
-                for i in 0..(k + 1) {
+                for i in 0..k {
                     let f_last = fs.last().unwrap();
                     let mut evals = f_last.clone();
                     evals.extend(std::iter::repeat(F::zero()).take((1 << (l - i)) - evals.len()));
@@ -150,11 +150,16 @@ impl Computation {
                     fs.push(f_next);
                     alphas.push(alpha);
                 }
-                assert_eq!(fs.last().unwrap().len(), 0);
+                assert_eq!(fs.last().unwrap().len(), 1);
+                let constant = fs.last().unwrap().last().unwrap().clone().publicize();
+                let mut bytes = Vec::new();
+                constant.serialize(&mut bytes).unwrap();
+                t.append_message(b"constant", &bytes);
+                println!("Constant: {}", constant);
 
                 let iter = 1;
                 for j in 0..iter {
-                    println!("FRI chain check {}/{}", j+1, iter);
+                    println!("FRI chain check {}/{}", j + 1, iter);
                     let mut challenge_bytes: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
                     t.challenge_bytes(b"challenge", &mut challenge_bytes[..]);
                     let mut x_i = u64::from_be_bytes(challenge_bytes) % (1 << l);
@@ -183,20 +188,25 @@ impl Computation {
                             neg_x_i as usize,
                             neg_val
                         ));
-                        let (next_val, next_pf) = F::open_at(
-                            &commitments[i + 1].0[..],
-                            &commitments[i + 1].1,
-                            x2_i as usize,
-                        );
-                        let mut bytes = Vec::new();
-                        next_pf.serialize(&mut bytes).unwrap();
-                        t.append_message(b"path2", &bytes);
-                        assert!(F::check_opening(
-                            &commitments[i + 1].2,
-                            next_pf,
-                            x2_i as usize,
+                        let next_val = if i + 1 < k {
+                            let (next_val, next_pf) = F::open_at(
+                                &commitments[i + 1].0[..],
+                                &commitments[i + 1].1,
+                                x2_i as usize,
+                            );
+                            let mut bytes = Vec::new();
+                            next_pf.serialize(&mut bytes).unwrap();
+                            t.append_message(b"path2", &bytes);
+                            assert!(F::check_opening(
+                                &commitments[i + 1].2,
+                                next_pf,
+                                x2_i as usize,
+                                next_val
+                            ));
                             next_val
-                        ));
+                        } else {
+                            constant
+                        };
                         assert!(
                             next_val
                                 == (val + neg_val) / F::from(2u8)
