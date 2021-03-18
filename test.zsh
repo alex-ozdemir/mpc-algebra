@@ -24,3 +24,8 @@ $BIN --port 8001 --peer-host localhost --peer-port 8000 -d merkle 1 2 3 4 --part
 $BIN --port 8000 --peer-host localhost --peer-port 8001 -d merkle 0 0 0 0 --party 1 &
 
 wait
+
+$BIN --port 8001 --peer-host localhost --peer-port 8000 -d fri 2 2 1 7 --party 0 &
+$BIN --port 8000 --peer-host localhost --peer-port 8001 -d fri 0 0 0 0 --party 1 &
+
+wait

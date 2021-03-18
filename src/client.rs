@@ -4,18 +4,20 @@ mod mpc;
 
 use ark_bls12_377::Fr;
 use ark_ff::{FftField, Field};
-use ark_serialize::CanonicalSerialize;
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
+use ark_serialize::CanonicalSerialize;
+use ark_std::rand::Rng;
+use ark_std::rand::SeedableRng;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use mpc::channel;
-use mpc::MpcVal;
 use mpc::ComField;
+use mpc::MpcVal;
 
 use clap::arg_enum;
-use structopt::StructOpt;
 use merlin::Transcript;
+use structopt::StructOpt;
 
 arg_enum! {
     #[derive(PartialEq, Debug)]
@@ -25,6 +27,7 @@ arg_enum! {
         Product,
         Commit,
         Merkle,
+        Fri,
     }
 }
 
@@ -102,7 +105,7 @@ impl Computation {
                 let mut bytes = Vec::new();
                 c.serialize(&mut bytes).unwrap();
                 t.append_message(b"commitment", &bytes);
-                let mut challenge_bytes: [u8; 8] = [0,0,0,0,0,0,0,0];
+                let mut challenge_bytes: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
                 t.challenge_bytes(b"challenge", &mut challenge_bytes[..]);
                 let n = u64::from_be_bytes(challenge_bytes) as usize;
                 let i = n % inputs.len();
@@ -110,6 +113,99 @@ impl Computation {
                 let (value, pf) = F::open_at(&inputs[..], &k, i);
                 let v = F::check_opening(&c, pf, i, value);
                 println!("Valid proof: {}", v);
+                vec![]
+            }
+            Computation::Fri => {
+                let mut t = Transcript::new(b"fri");
+                let n = inputs.len();
+                assert!(n.is_power_of_two());
+                let k = n.trailing_zeros() as usize;
+                let l = k + 1;
+                let mut fs = vec![inputs];
+                let mut commitments = Vec::new();
+                let mut alphas = Vec::new();
+                println!("k: {}", k);
+                for i in 0..(k + 1) {
+                    let f_last = fs.last().unwrap();
+                    let mut evals = f_last.clone();
+                    evals.extend(std::iter::repeat(F::zero()).take((1 << (l - i)) - evals.len()));
+                    let d = Radix2EvaluationDomain::<F>::new(evals.len()).unwrap();
+                    d.fft_in_place(&mut evals);
+                    let (tree, root) = F::commit(&evals);
+                    commitments.push((evals, tree, root));
+                    let mut bytes = Vec::new();
+                    commitments.last().unwrap().2.serialize(&mut bytes).unwrap();
+                    t.append_message(b"commitment", &bytes);
+                    //TODO: entropy problem for large fields...
+                    // need to wrestle with ff's random sampling implementation properly
+                    let mut challenge_bytes = [0u8; 32];
+                    t.challenge_bytes(b"challenge", &mut challenge_bytes);
+                    let mut rng = rand::rngs::StdRng::from_seed(challenge_bytes);
+                    let alpha = F::rand(&mut rng);
+                    println!("Fri commit round {}, challenge: {}", i, alpha);
+                    let mut f_next = Vec::new();
+                    for i in 0..f_last.len() / 2 {
+                        f_next.push(f_last[2 * i] + f_last[2 * i + 1] * alpha);
+                    }
+                    fs.push(f_next);
+                    alphas.push(alpha);
+                }
+                assert_eq!(fs.last().unwrap().len(), 0);
+
+                let iter = 1;
+                for j in 0..iter {
+                    println!("FRI chain check {}/{}", j+1, iter);
+                    let mut challenge_bytes: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+                    t.challenge_bytes(b"challenge", &mut challenge_bytes[..]);
+                    let mut x_i = u64::from_be_bytes(challenge_bytes) % (1 << l);
+                    // index of x in seq.
+                    for i in 0..k {
+                        let n: u64 = 1 << (l - i);
+                        let omega = F::get_root_of_unity(n as usize).unwrap();
+                        let x = omega.pow(&[x_i]);
+                        let neg_x_i = (n / 2 + x_i) % n;
+                        assert_eq!(-x, omega.pow(&[neg_x_i]));
+                        let x2_i = 2 * x_i % n / 2;
+                        let (val, pf) =
+                            F::open_at(&commitments[i].0[..], &commitments[i].1, x_i as usize);
+                        let mut bytes = Vec::new();
+                        pf.serialize(&mut bytes).unwrap();
+                        t.append_message(b"path", &bytes);
+                        assert!(F::check_opening(&commitments[i].2, pf, x_i as usize, val));
+                        let (neg_val, neg_pf) =
+                            F::open_at(&commitments[i].0[..], &commitments[i].1, neg_x_i as usize);
+                        let mut bytes = Vec::new();
+                        neg_pf.serialize(&mut bytes).unwrap();
+                        t.append_message(b"path1", &bytes);
+                        assert!(F::check_opening(
+                            &commitments[i].2,
+                            neg_pf,
+                            neg_x_i as usize,
+                            neg_val
+                        ));
+                        let (next_val, next_pf) = F::open_at(
+                            &commitments[i + 1].0[..],
+                            &commitments[i + 1].1,
+                            x2_i as usize,
+                        );
+                        let mut bytes = Vec::new();
+                        next_pf.serialize(&mut bytes).unwrap();
+                        t.append_message(b"path2", &bytes);
+                        assert!(F::check_opening(
+                            &commitments[i + 1].2,
+                            next_pf,
+                            x2_i as usize,
+                            next_val
+                        ));
+                        assert!(
+                            next_val
+                                == (val + neg_val) / F::from(2u8)
+                                    + alphas[i] * (val - neg_val) / (F::from(2u8) * x)
+                        );
+                        // TODO: add to transcript
+                        x_i = x2_i;
+                    }
+                }
                 vec![]
             }
         };
@@ -120,7 +216,6 @@ impl Computation {
         outputs
     }
 }
-
 
 type MFr = MpcVal<Fr>;
 
@@ -147,9 +242,16 @@ fn main() -> () {
         .unwrap();
     channel::init(self_addr, peer_addr, opt.party == 0);
     debug!("Start");
-    let inputs = opt.args.iter().map(|i| MFr::from_shared(Fr::from(*i))).collect::<Vec<MFr>>();
+    let inputs = opt
+        .args
+        .iter()
+        .map(|i| MFr::from_shared(Fr::from(*i)))
+        .collect::<Vec<MFr>>();
     let outputs = opt.computation.run(inputs);
-    let public_outputs = outputs.into_iter().map(|c| c.publicize()).collect::<Vec<_>>();
+    let public_outputs = outputs
+        .into_iter()
+        .map(|c| c.publicize())
+        .collect::<Vec<_>>();
     println!("Public Outputs:");
     for (i, v) in public_outputs.iter().enumerate() {
         println!("  {}: {}", i, v);
