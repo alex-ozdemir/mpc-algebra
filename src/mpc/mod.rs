@@ -1,6 +1,5 @@
 use ark_bls12_377::Bls12_377;
-//use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ec::PairingEngine;
+use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::{FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
 use ark_serialize::*;
 use ark_std::UniformRand;
@@ -20,42 +19,400 @@ pub struct MpcVal<T> {
     shared: bool,
 }
 
-impl<F: std::fmt::Display> std::fmt::Display for MpcVal<F> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.val)?;
-        if self.shared {
-            write!(f, " (shared)")
-        } else {
-            write!(f, " (public)")
+#[derive(Clone, Copy, Default, Hash, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MpcCurve<T> {
+    val: T,
+    shared: bool,
+}
+
+macro_rules! impl_basics {
+    ($ty:ident) => {
+        impl<F: std::fmt::Display> std::fmt::Display for $ty<F> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.val)?;
+                if self.shared {
+                    write!(f, " (shared)")
+                } else {
+                    write!(f, " (public)")
+                }
+            }
         }
+
+        impl<T> $ty<T> {
+            pub fn new(val: T, shared: bool) -> Self {
+                Self { val, shared }
+            }
+            pub fn from_public(val: T) -> Self {
+                Self::new(val, false)
+            }
+            pub fn from_shared(val: T) -> Self {
+                Self::new(val, true)
+            }
+        }
+
+        impl<F: zeroize::Zeroize> zeroize::Zeroize for $ty<F> {
+            fn zeroize(&mut self) {
+                self.val.zeroize();
+            }
+        }
+
+        impl<F: ark_ff::ToBytes> ark_ff::ToBytes for $ty<F> {
+            #[inline]
+            fn write<W: ark_std::io::Write>(&self, writer: W) -> ark_std::io::Result<()> {
+                assert!(!self.shared);
+                self.val.write(writer)
+            }
+        }
+
+        impl<F: AddAssign<F>> AddAssign<$ty<F>> for $ty<F> {
+            fn add_assign(&mut self, other: $ty<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.add_assign(other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.add_assign(other.val);
+                        } else {
+                            self.val = other.val;
+                        }
+                    }
+                    _ => {
+                        self.val.add_assign(other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+
+        impl<F: Add<F, Output = F>> Add<$ty<F>> for $ty<F> {
+            type Output = $ty<F>;
+            fn add(self, other: $ty<F>) -> Self::Output {
+                Self::new(
+                    if self.shared == other.shared || channel::am_first() {
+                        self.val.add(other.val)
+                    } else if other.shared {
+                        other.val
+                    } else {
+                        self.val
+                    },
+                    self.shared || other.shared,
+                )
+            }
+        }
+
+        impl<'a, F: AddAssign<&'a F> + Clone> AddAssign<&'a $ty<F>> for $ty<F> {
+            fn add_assign(&mut self, other: &'a $ty<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.add_assign(&other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.add_assign(&other.val);
+                        } else {
+                            self.val = other.val.clone();
+                        }
+                    }
+                    _ => {
+                        self.val.add_assign(&other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+
+        impl<'a, F: Add<&'a F, Output = F> + Clone> Add<&'a $ty<F>> for $ty<F> {
+            type Output = $ty<F>;
+            fn add(self, other: &'a $ty<F>) -> Self::Output {
+                Self::new(
+                    if self.shared == other.shared || channel::am_first() {
+                        self.val.add(&other.val)
+                    } else if other.shared {
+                        other.val.clone()
+                    } else {
+                        self.val
+                    },
+                    self.shared || other.shared,
+                )
+            }
+        }
+
+        impl<F: SubAssign<F> + Neg<Output = F>> SubAssign<$ty<F>> for $ty<F> {
+            fn sub_assign(&mut self, other: $ty<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.sub_assign(other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.sub_assign(other.val);
+                        } else {
+                            self.val = -other.val;
+                        }
+                    }
+                    _ => {
+                        self.val.sub_assign(other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+
+        impl<F: Sub<F, Output = F> + Neg<Output = F>> Sub<$ty<F>> for $ty<F> {
+            type Output = $ty<F>;
+            fn sub(self, other: $ty<F>) -> Self::Output {
+                Self::new(
+                    if self.shared == other.shared || channel::am_first() {
+                        self.val.sub(other.val)
+                    } else if other.shared {
+                        -other.val
+                    } else {
+                        self.val
+                    },
+                    self.shared || other.shared,
+                )
+            }
+        }
+
+        impl<'a, F: SubAssign<&'a F> + Clone + Neg<Output = F>> SubAssign<&'a $ty<F>> for $ty<F> {
+            fn sub_assign(&mut self, other: &'a $ty<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.sub_assign(&other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.sub_assign(&other.val);
+                        } else {
+                            self.val = -other.val.clone();
+                        }
+                    }
+                    _ => {
+                        self.val.sub_assign(&other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+
+        impl<'a, F: Sub<&'a F, Output = F> + Clone + Neg<Output = F>> Sub<&'a $ty<F>> for $ty<F> {
+            type Output = $ty<F>;
+            fn sub(self, other: &'a $ty<F>) -> Self::Output {
+                Self::new(
+                    if self.shared == other.shared || channel::am_first() {
+                        self.val.sub(&other.val)
+                    } else if other.shared {
+                        -other.val.clone()
+                    } else {
+                        self.val
+                    },
+                    self.shared || other.shared,
+                )
+            }
+        }
+        impl<F: Neg<Output = F>> Neg for $ty<F> {
+            type Output = $ty<F>;
+            fn neg(mut self) -> Self::Output {
+                self.val = self.val.neg();
+                self
+            }
+        }
+        impl<
+                F: for<'a> AddAssign<&'a F>
+                    + ark_serialize::CanonicalSerialize
+                    + ark_serialize::CanonicalDeserialize
+                    + Clone,
+            > ark_serialize::CanonicalSerialize for $ty<F>
+        {
+            fn serialize<W>(&self, w: W) -> std::result::Result<(), ark_serialize::SerializationError>
+            where
+                W: ark_serialize::Write,
+            {
+                self.publicize_cow().val.serialize(w)
+            }
+            fn serialized_size(&self) -> usize {
+                self.val.serialized_size()
+            }
+        }
+        impl<
+                F: for<'a> AddAssign<&'a F>
+                    + ark_serialize::CanonicalSerialize
+                    + ark_serialize::CanonicalDeserialize
+                    + Clone,
+            > ark_serialize::CanonicalDeserialize for $ty<F>
+        {
+            fn deserialize<R>(r: R) -> std::result::Result<Self, ark_serialize::SerializationError>
+            where
+                R: ark_serialize::Read,
+            {
+                F::deserialize(r).map($ty::from_public)
+            }
+        }
+        impl<
+                F: for<'a> AddAssign<&'a F>
+                    + ark_serialize::CanonicalSerialize
+                    + ark_serialize::CanonicalDeserializeWithFlags
+                    + Clone,
+            > ark_serialize::CanonicalDeserializeWithFlags for $ty<F>
+        {
+            fn deserialize_with_flags<R, Fl>(
+                r: R,
+            ) -> std::result::Result<(Self, Fl), ark_serialize::SerializationError>
+            where
+                R: ark_serialize::Read,
+                Fl: Flags,
+            {
+                F::deserialize_with_flags(r).map(|(s, f)| ($ty::from_public(s), f))
+            }
+        }
+
+        impl<
+                F: for<'a> AddAssign<&'a F>
+                    + ark_serialize::CanonicalSerializeWithFlags
+                    + ark_serialize::CanonicalDeserialize
+                    + Clone,
+            > ark_serialize::CanonicalSerializeWithFlags for $ty<F>
+        {
+            fn serialize_with_flags<W, Fl>(
+                &self,
+                w: W,
+                f: Fl,
+            ) -> std::result::Result<(), ark_serialize::SerializationError>
+            where
+                W: ark_serialize::Write,
+                Fl: Flags,
+            {
+                self.publicize_cow().val.serialize_with_flags(w, f)
+            }
+            fn serialized_size_with_flags<Fl>(&self) -> usize
+            where
+                Fl: ark_serialize::Flags,
+            {
+                self.val.serialized_size_with_flags::<Fl>()
+            }
+        }
+
+        impl<
+                F: for<'a> AddAssign<&'a F>
+                    + ark_serialize::CanonicalSerialize
+                    + ark_serialize::CanonicalDeserialize
+                    + Clone,
+            > $ty<F>
+        {
+            pub fn publicize(self) -> Self {
+                if self.shared {
+                    let mut other_val = channel::exchange(self.val.clone());
+                    other_val += &self.val;
+                    Self::from_public(other_val)
+                } else {
+                    self
+                }
+            }
+        }
+
+        impl<
+                F: for<'a> AddAssign<&'a F>
+                    + ark_serialize::CanonicalSerialize
+                    + ark_serialize::CanonicalDeserialize
+                    + Clone,
+            > $ty<F>
+        {
+            pub fn publicize_cow<'b>(&'b self) -> Cow<'b, Self> {
+                if self.shared {
+                    let mut other_val = channel::exchange(self.val.clone());
+                    other_val += &self.val;
+                    Cow::Owned(Self::from_public(other_val))
+                } else {
+                    Cow::Borrowed(self)
+                }
+            }
+        }
+        impl<F: ark_ff::FromBytes> ark_ff::FromBytes for $ty<F> {
+            #[inline]
+            fn read<R: ark_std::io::Read>(reader: R) -> ark_std::io::Result<Self> {
+                F::read(reader).map(Self::from_public)
+            }
+        }
+
+        impl<F: UniformRand> Distribution<$ty<F>> for rand::distributions::Standard {
+            fn sample<R: ?Sized>(&self, r: &mut R) -> $ty<F>
+            where
+                R: Rng,
+            {
+                $ty {
+                    val: F::rand(r),
+                    // TODO: Good for FRI, bad in general?
+                    shared: false,
+                }
+            }
+        }
+
+        impl<F: AsMut<[u64]>> AsMut<[u64]> for $ty<F> {
+            fn as_mut(&mut self) -> &mut [u64] {
+                self.val.as_mut()
+            }
+        }
+
+        impl<F: AsRef<[u64]>> AsRef<[u64]> for $ty<F> {
+            fn as_ref(&self) -> &[u64] {
+                self.val.as_ref()
+            }
+        }
+
+        impl<F: std::str::FromStr> std::str::FromStr for $ty<F> {
+            type Err = F::Err;
+            fn from_str(s: &str) -> Result<Self, F::Err> {
+                F::from_str(s).map(Self::from_public)
+            }
+        }
+
+        impl<F: ark_ff::Zero> ark_ff::Zero for $ty<F> {
+            fn zero() -> Self {
+                Self::from_public(F::zero())
+            }
+            fn is_zero(&self) -> bool {
+                assert!(!self.shared);
+                self.val.is_zero()
+            }
+        }
+
+        impl<F: ark_ff::Zero + Add> ark_std::iter::Sum<$ty<F>> for $ty<F> {
+            fn sum<I>(i: I) -> Self
+            where
+                I: Iterator<Item = $ty<F>>,
+            {
+                i.fold($ty::zero(), Add::add)
+            }
+        }
+        impl<'a, F: 'a + ark_ff::Zero + Add<&'a F, Output = F> + Clone> ark_std::iter::Sum<&'a $ty<F>>
+            for $ty<F>
+        {
+            fn sum<I>(i: I) -> Self
+            where
+                I: Iterator<Item = &'a $ty<F>>,
+            {
+                i.fold($ty::zero(), Add::add)
+            }
+        }
+
     }
 }
 
-impl<T> MpcVal<T> {
-    pub fn new(val: T, shared: bool) -> Self {
-        Self { val, shared }
-    }
-    pub fn from_public(val: T) -> Self {
-        Self::new(val, false)
-    }
-    pub fn from_shared(val: T) -> Self {
-        Self::new(val, true)
-    }
-}
-
-impl<F: zeroize::Zeroize> zeroize::Zeroize for MpcVal<F> {
-    fn zeroize(&mut self) {
-        self.val.zeroize();
-    }
-}
-
-impl<F: ark_ff::ToBytes> ark_ff::ToBytes for MpcVal<F> {
-    #[inline]
-    fn write<W: ark_std::io::Write>(&self, writer: W) -> ark_std::io::Result<()> {
-        assert!(!self.shared);
-        self.val.write(writer)
-    }
-}
+impl_basics!(MpcVal);
+impl_basics!(MpcCurve);
 
 // macro_rules! add_op {
 //    ($T:ty,$L:ty,$R:ty,$O:ty,$f:ident) => {
@@ -78,166 +435,6 @@ impl<F: ark_ff::ToBytes> ark_ff::ToBytes for MpcVal<F> {
 //}
 // add_op!(Sub,MpcVal,MpcVal,MpcVal,sub);
 
-impl<F: AddAssign<F>> AddAssign<MpcVal<F>> for MpcVal<F> {
-    fn add_assign(&mut self, other: MpcVal<F>) {
-        match (self.shared, other.shared) {
-            (true, false) => {
-                if channel::am_first() {
-                    self.val.add_assign(other.val);
-                } else {
-                }
-            }
-            (false, true) => {
-                if channel::am_first() {
-                    self.val.add_assign(other.val);
-                } else {
-                    self.val = other.val;
-                }
-            }
-            _ => {
-                self.val.add_assign(other.val);
-            }
-        }
-        self.shared = self.shared || other.shared;
-    }
-}
-
-impl<F: Add<F, Output = F>> Add<MpcVal<F>> for MpcVal<F> {
-    type Output = MpcVal<F>;
-    fn add(self, other: MpcVal<F>) -> Self::Output {
-        Self::new(
-            if self.shared == other.shared || channel::am_first() {
-                self.val.add(other.val)
-            } else if other.shared {
-                other.val
-            } else {
-                self.val
-            },
-            self.shared || other.shared,
-        )
-    }
-}
-
-impl<'a, F: AddAssign<&'a F> + Clone> AddAssign<&'a MpcVal<F>> for MpcVal<F> {
-    fn add_assign(&mut self, other: &'a MpcVal<F>) {
-        match (self.shared, other.shared) {
-            (true, false) => {
-                if channel::am_first() {
-                    self.val.add_assign(&other.val);
-                } else {
-                }
-            }
-            (false, true) => {
-                if channel::am_first() {
-                    self.val.add_assign(&other.val);
-                } else {
-                    self.val = other.val.clone();
-                }
-            }
-            _ => {
-                self.val.add_assign(&other.val);
-            }
-        }
-        self.shared = self.shared || other.shared;
-    }
-}
-
-impl<'a, F: Add<&'a F, Output = F> + Clone> Add<&'a MpcVal<F>> for MpcVal<F> {
-    type Output = MpcVal<F>;
-    fn add(self, other: &'a MpcVal<F>) -> Self::Output {
-        Self::new(
-            if self.shared == other.shared || channel::am_first() {
-                self.val.add(&other.val)
-            } else if other.shared {
-                other.val.clone()
-            } else {
-                self.val
-            },
-            self.shared || other.shared,
-        )
-    }
-}
-
-impl<F: SubAssign<F> + Neg<Output = F>> SubAssign<MpcVal<F>> for MpcVal<F> {
-    fn sub_assign(&mut self, other: MpcVal<F>) {
-        match (self.shared, other.shared) {
-            (true, false) => {
-                if channel::am_first() {
-                    self.val.sub_assign(other.val);
-                } else {
-                }
-            }
-            (false, true) => {
-                if channel::am_first() {
-                    self.val.sub_assign(other.val);
-                } else {
-                    self.val = -other.val;
-                }
-            }
-            _ => {
-                self.val.sub_assign(other.val);
-            }
-        }
-        self.shared = self.shared || other.shared;
-    }
-}
-
-impl<F: Sub<F, Output = F> + Neg<Output = F>> Sub<MpcVal<F>> for MpcVal<F> {
-    type Output = MpcVal<F>;
-    fn sub(self, other: MpcVal<F>) -> Self::Output {
-        Self::new(
-            if self.shared == other.shared || channel::am_first() {
-                self.val.sub(other.val)
-            } else if other.shared {
-                -other.val
-            } else {
-                self.val
-            },
-            self.shared || other.shared,
-        )
-    }
-}
-
-impl<'a, F: SubAssign<&'a F> + Clone + Neg<Output = F>> SubAssign<&'a MpcVal<F>> for MpcVal<F> {
-    fn sub_assign(&mut self, other: &'a MpcVal<F>) {
-        match (self.shared, other.shared) {
-            (true, false) => {
-                if channel::am_first() {
-                    self.val.sub_assign(&other.val);
-                } else {
-                }
-            }
-            (false, true) => {
-                if channel::am_first() {
-                    self.val.sub_assign(&other.val);
-                } else {
-                    self.val = -other.val.clone();
-                }
-            }
-            _ => {
-                self.val.sub_assign(&other.val);
-            }
-        }
-        self.shared = self.shared || other.shared;
-    }
-}
-
-impl<'a, F: Sub<&'a F, Output = F> + Clone + Neg<Output = F>> Sub<&'a MpcVal<F>> for MpcVal<F> {
-    type Output = MpcVal<F>;
-    fn sub(self, other: &'a MpcVal<F>) -> Self::Output {
-        Self::new(
-            if self.shared == other.shared || channel::am_first() {
-                self.val.sub(&other.val)
-            } else if other.shared {
-                -other.val.clone()
-            } else {
-                self.val
-            },
-            self.shared || other.shared,
-        )
-    }
-}
-
 impl<F: Field> MulAssign<MpcVal<F>> for MpcVal<F> {
     fn mul_assign(&mut self, other: MpcVal<F>) {
         match (self.shared, other.shared) {
@@ -247,6 +444,13 @@ impl<F: Field> MulAssign<MpcVal<F>> for MpcVal<F> {
             _ => self.val.mul_assign(other.val),
         };
         self.shared = self.shared || other.shared;
+    }
+}
+
+impl<G: ProjectiveCurve> MulAssign<MpcVal<G::ScalarField>> for MpcCurve<G> {
+    fn mul_assign(&mut self, _other: MpcVal<G::ScalarField>) {
+        unimplemented!("curve mult")
+        //*self = self.mul(other.into_repr())
     }
 }
 
@@ -318,13 +522,6 @@ impl<'a, F: DivAssign<&'a F>> Div<&'a MpcVal<F>> for MpcVal<F> {
         self
     }
 }
-impl<F: Neg<Output = F>> Neg for MpcVal<F> {
-    type Output = MpcVal<F>;
-    fn neg(mut self) -> Self::Output {
-        self.val = self.val.neg();
-        self
-    }
-}
 
 impl<F: Field> ark_ff::One for MpcVal<F> {
     fn one() -> Self {
@@ -332,34 +529,6 @@ impl<F: Field> ark_ff::One for MpcVal<F> {
     }
 }
 
-impl<F: ark_ff::Zero> ark_ff::Zero for MpcVal<F> {
-    fn zero() -> Self {
-        Self::from_public(F::zero())
-    }
-    fn is_zero(&self) -> bool {
-        assert!(!self.shared);
-        self.val.is_zero()
-    }
-}
-
-impl<F: ark_ff::Zero + Add> ark_std::iter::Sum<MpcVal<F>> for MpcVal<F> {
-    fn sum<I>(i: I) -> Self
-    where
-        I: Iterator<Item = MpcVal<F>>,
-    {
-        i.fold(MpcVal::zero(), Add::add)
-    }
-}
-impl<'a, F: 'a + ark_ff::Zero + Add<&'a F, Output = F> + Clone> ark_std::iter::Sum<&'a MpcVal<F>>
-    for MpcVal<F>
-{
-    fn sum<I>(i: I) -> Self
-    where
-        I: Iterator<Item = &'a MpcVal<F>>,
-    {
-        i.fold(MpcVal::zero(), Add::add)
-    }
-}
 impl<F: Field> ark_std::iter::Product<MpcVal<F>> for MpcVal<F> {
     fn product<I>(i: I) -> Self
     where
@@ -374,80 +543,6 @@ impl<'a, F: 'a + Field> ark_std::iter::Product<&'a MpcVal<F>> for MpcVal<F> {
         I: Iterator<Item = &'a MpcVal<F>>,
     {
         i.fold(MpcVal::one(), Mul::mul)
-    }
-}
-impl<
-        F: AddAssign<F>
-            + ark_serialize::CanonicalSerialize
-            + ark_serialize::CanonicalDeserialize
-            + Clone,
-    > ark_serialize::CanonicalSerialize for MpcVal<F>
-{
-    fn serialize<W>(&self, w: W) -> std::result::Result<(), ark_serialize::SerializationError>
-    where
-        W: ark_serialize::Write,
-    {
-        self.publicize_cow().val.serialize(w)
-    }
-    fn serialized_size(&self) -> usize {
-        self.val.serialized_size()
-    }
-}
-impl<
-        F: AddAssign<F>
-            + ark_serialize::CanonicalSerialize
-            + ark_serialize::CanonicalDeserialize
-            + Clone,
-    > ark_serialize::CanonicalDeserialize for MpcVal<F>
-{
-    fn deserialize<R>(r: R) -> std::result::Result<Self, ark_serialize::SerializationError>
-    where
-        R: ark_serialize::Read,
-    {
-        F::deserialize(r).map(MpcVal::from_public)
-    }
-}
-impl<
-        F: AddAssign<F>
-            + ark_serialize::CanonicalSerialize
-            + ark_serialize::CanonicalDeserializeWithFlags
-            + Clone,
-    > ark_serialize::CanonicalDeserializeWithFlags for MpcVal<F>
-{
-    fn deserialize_with_flags<R, Fl>(
-        r: R,
-    ) -> std::result::Result<(Self, Fl), ark_serialize::SerializationError>
-    where
-        R: ark_serialize::Read,
-        Fl: Flags,
-    {
-        F::deserialize_with_flags(r).map(|(s, f)| (MpcVal::from_public(s), f))
-    }
-}
-
-impl<
-        F: AddAssign<F>
-            + ark_serialize::CanonicalSerializeWithFlags
-            + ark_serialize::CanonicalDeserialize
-            + Clone,
-    > ark_serialize::CanonicalSerializeWithFlags for MpcVal<F>
-{
-    fn serialize_with_flags<W, Fl>(
-        &self,
-        w: W,
-        f: Fl,
-    ) -> std::result::Result<(), ark_serialize::SerializationError>
-    where
-        W: ark_serialize::Write,
-        Fl: Flags,
-    {
-        self.publicize_cow().val.serialize_with_flags(w, f)
-    }
-    fn serialized_size_with_flags<Fl>(&self) -> usize
-    where
-        Fl: ark_serialize::Flags,
-    {
-        self.val.serialized_size_with_flags::<Fl>()
     }
 }
 //impl<F: ark_serialize::ConstantSerializedSize> ark_serialize::ConstantSerializedSize for MpcVal<F> {
@@ -472,44 +567,6 @@ from_prim!(u32);
 from_prim!(u64);
 from_prim!(u128);
 
-impl<F: ark_ff::FromBytes> ark_ff::FromBytes for MpcVal<F> {
-    #[inline]
-    fn read<R: ark_std::io::Read>(reader: R) -> ark_std::io::Result<Self> {
-        F::read(reader).map(Self::from_public)
-    }
-}
-
-impl<F: UniformRand> Distribution<MpcVal<F>> for rand::distributions::Standard {
-    fn sample<R: ?Sized>(&self, r: &mut R) -> MpcVal<F>
-    where
-        R: Rng,
-    {
-        MpcVal {
-            val: F::rand(r),
-            // TODO: Good for FRI, bad in general?
-            shared: false,
-        }
-    }
-}
-
-impl<F: AsMut<[u64]>> AsMut<[u64]> for MpcVal<F> {
-    fn as_mut(&mut self) -> &mut [u64] {
-        self.val.as_mut()
-    }
-}
-
-impl<F: AsRef<[u64]>> AsRef<[u64]> for MpcVal<F> {
-    fn as_ref(&self) -> &[u64] {
-        self.val.as_ref()
-    }
-}
-
-impl<F: std::str::FromStr> std::str::FromStr for MpcVal<F> {
-    type Err = F::Err;
-    fn from_str(s: &str) -> Result<Self, F::Err> {
-        F::from_str(s).map(Self::from_public)
-    }
-}
 
 macro_rules! shared_field {
     ($Pf:ty) => {
@@ -655,61 +712,61 @@ shared_sqrt_field!(ark_bls12_377::Fq);
 // shared_field!(ark_bls12_377::Fq2);
 // shared_sqrt_field!(ark_bls12_377::Fq2);
 
-//impl AffineCurve for MpcVal<ark_bls12_377::G1Affine> {
-//    type ScalarField = MpcVal<ark_bls12_377::Fr>;
-//    const COFACTOR: &'static [u64] = ark_bls12_377::G1Affine::COFACTOR;
-//    type BaseField = MpcVal<ark_bls12_377::Fq>;
-//    type Projective = MpcVal<ark_bls12_377::G1Projective>;
-//    fn prime_subgroup_generator() -> Self {
-//        todo!()
-//    }
-//    fn from_random_bytes(_: &[u8]) -> Option<Self> {
-//        todo!()
-//    }
-//    fn mul<S: Into<<Self::ScalarField as PrimeField>::BigInt>>(
-//        &self,
-//        _: S,
-//    ) -> <Self as AffineCurve>::Projective {
-//        todo!()
-//    }
-//    fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
-//        todo!()
-//    }
-//    fn mul_by_cofactor_inv(&self) -> Self {
-//        todo!()
-//    }
-//}
-//impl From<MpcVal<ark_bls12_377::G1Projective>> for MpcVal<ark_bls12_377::G1Affine> {
-//    fn from(p: MpcVal<ark_bls12_377::G1Projective>) -> Self {
-//        Self::new(p.val.into(), p.shared)
-//    }
-//}
-//impl From<MpcVal<ark_bls12_377::G1Affine>> for MpcVal<ark_bls12_377::G1Projective> {
-//    fn from(p: MpcVal<ark_bls12_377::G1Affine>) -> Self {
-//        Self::new(p.val.into(), p.shared)
-//    }
-//}
-//impl ProjectiveCurve for MpcVal<ark_bls12_377::G1Projective> {
-//    const COFACTOR: &'static [u64] = ark_bls12_377::G1Projective::COFACTOR;
-//    type ScalarField = MpcVal<ark_bls12_377::Fr>;
-//    type BaseField = MpcVal<ark_bls12_377::Fq>;
-//    type Affine = MpcVal<ark_bls12_377::G1Affine>;
-//    fn prime_subgroup_generator() -> Self {
-//        todo!()
-//    }
-//    fn batch_normalization(_: &mut [Self]) {
-//        todo!()
-//    }
-//    fn is_normalized(&self) -> bool {
-//        todo!()
-//    }
-//    fn double_in_place(&mut self) -> &mut Self {
-//        todo!()
-//    }
-//    fn add_assign_mixed(&mut self, _: &<Self as ProjectiveCurve>::Affine) {
-//        todo!()
-//    }
-//}
+impl AffineCurve for MpcVal<ark_bls12_377::G1Affine> {
+    type ScalarField = MpcVal<ark_bls12_377::Fr>;
+    const COFACTOR: &'static [u64] = ark_bls12_377::G1Affine::COFACTOR;
+    type BaseField = MpcVal<ark_bls12_377::Fq>;
+    type Projective = MpcCurve<ark_bls12_377::G1Projective>;
+    fn prime_subgroup_generator() -> Self {
+        todo!()
+    }
+    fn from_random_bytes(_: &[u8]) -> Option<Self> {
+        todo!()
+    }
+    fn mul<S: Into<<Self::ScalarField as PrimeField>::BigInt>>(
+        &self,
+        _: S,
+    ) -> <Self as AffineCurve>::Projective {
+        todo!()
+    }
+    fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
+        todo!()
+    }
+    fn mul_by_cofactor_inv(&self) -> Self {
+        todo!()
+    }
+}
+impl From<MpcCurve<ark_bls12_377::G1Projective>> for MpcVal<ark_bls12_377::G1Affine> {
+    fn from(p: MpcCurve<ark_bls12_377::G1Projective>) -> Self {
+        Self::new(p.val.into(), p.shared)
+    }
+}
+impl From<MpcVal<ark_bls12_377::G1Affine>> for MpcCurve<ark_bls12_377::G1Projective> {
+    fn from(p: MpcVal<ark_bls12_377::G1Affine>) -> Self {
+        Self::new(p.val.into(), p.shared)
+    }
+}
+impl ProjectiveCurve for MpcCurve<ark_bls12_377::G1Projective> {
+    const COFACTOR: &'static [u64] = ark_bls12_377::G1Projective::COFACTOR;
+    type ScalarField = MpcVal<ark_bls12_377::Fr>;
+    type BaseField = MpcVal<ark_bls12_377::Fq>;
+    type Affine = MpcVal<ark_bls12_377::G1Affine>;
+    fn prime_subgroup_generator() -> Self {
+        todo!()
+    }
+    fn batch_normalization(_: &mut [Self]) {
+        todo!()
+    }
+    fn is_normalized(&self) -> bool {
+        todo!()
+    }
+    fn double_in_place(&mut self) -> &mut Self {
+        todo!()
+    }
+    fn add_assign_mixed(&mut self, _: &<Self as ProjectiveCurve>::Affine) {
+        todo!()
+    }
+}
 //    type ScalarField: PrimeField + SquareRootField + Into<<Self::ScalarField
 // as PrimeField>::BigInt>;    type BaseField: Field;
 //    type Projective: ProjectiveCurve<Affine = Self, ScalarField =
@@ -785,43 +842,6 @@ impl PairingEngine for MpcPairingEngine<Bls12_377> {
     }
 }
 
-impl<
-        F: AddAssign<F>
-            + ark_serialize::CanonicalSerialize
-            + ark_serialize::CanonicalDeserialize
-            + Clone,
-    > MpcVal<F>
-{
-    pub fn publicize(self) -> Self {
-        if self.shared {
-            let mut other_val = channel::exchange(self.val.clone());
-            other_val += self.val;
-            Self::from_public(other_val)
-        } else {
-            self
-        }
-    }
-}
-
-impl<
-        F: AddAssign<F>
-            + ark_serialize::CanonicalSerialize
-            + ark_serialize::CanonicalDeserialize
-            + Clone,
-    > MpcVal<F>
-{
-    pub fn publicize_cow<'a>(&'a self) -> Cow<'a, Self> {
-        if self.shared {
-            let mut other_val = channel::exchange(self.val.clone());
-            other_val += self.val.clone();
-            Cow::Owned(Self::from_public(other_val))
-        } else {
-            Cow::Borrowed(self)
-        }
-    }
-}
-
-
 /// Vector-Commitable Field
 pub trait ComField: FftField {
     type Commitment: ark_serialize::CanonicalSerialize;
@@ -883,7 +903,7 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
         let other_f = channel::exchange(self_f.clone());
         let mut siblings = Vec::new();
         for level in 0..tree.len() {
-            debug!("sib {}: {:?}", level, tree[level][i^1]);
+            debug!("sib {}: {:?}", level, tree[level][i ^ 1]);
             siblings.push(tree[level][i ^ 1].clone());
             i /= 2;
         }
