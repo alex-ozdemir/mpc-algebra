@@ -13,6 +13,14 @@ lazy_static! {
     static ref CH: Mutex<FieldChannel> = Mutex::new(FieldChannel::default());
 }
 
+/// Macro for locking the FieldChannel singleton in the current scope.
+#[macro_use]
+macro_rules! get_ch {
+    () => {
+        CH.lock().expect("Poisoned FieldChannel")
+    };
+}
+
 struct FieldChannel {
     /// Empty if unitialized
     stream: Option<TcpStream>,
@@ -128,6 +136,97 @@ impl FieldChannel {
         }
     }
 
+    fn field_triple<F: Field>(&self) -> Triple<F, F, F> {
+        //TODO
+        if self.talk_first {
+            (
+                MpcVal::from_shared(F::from(1u8)),
+                MpcVal::from_shared(F::from(1u8)),
+                MpcVal::from_shared(F::from(1u8)),
+            )
+        } else {
+            (
+                MpcVal::from_shared(F::from(0u8)),
+                MpcVal::from_shared(F::from(0u8)),
+                MpcVal::from_shared(F::from(0u8)),
+            )
+        }
+    }
+
+    fn field_mul<F: Field>(&mut self, mut a: MpcVal<F>, b: MpcVal<F>) -> MpcVal<F> {
+        if a.shared && b.shared {
+            // x * y = z
+            let (x, y, mut z) = self.field_triple();
+            // x + aA
+            let xa = self.field_add(a, &x);
+            let xa = self.field_publicize(xa);
+            // y + b
+            let yb = self.field_add(b, &y);
+            let yb = self.field_publicize(yb);
+            z.val -= y.val * &xa.val;
+            z.val -= x.val * &yb.val;
+            if self.talk_first {
+                z.val += xa.val * &yb.val;
+            }
+            z
+        } else {
+            a.val *= b.val;
+            a.shared = a.shared || b.shared;
+            a
+        }
+    }
+
+    fn field_add<F: Field>(&mut self, mut a: MpcVal<F>, b: &MpcVal<F>) -> MpcVal<F> {
+        match (a.shared, b.shared) {
+            (true, true) | (false, false) => {
+                a.val += &b.val;
+                a
+            }
+            (true, false) => {
+                if self.talk_first {
+                    a.val += &b.val;
+                }
+                a
+            }
+            (false, true) => {
+                a.shared = true;
+                if self.talk_first {
+                    a.val += &b.val;
+                }
+                a
+            }
+        }
+    }
+
+    fn field_sub<F: Field>(&mut self, mut a: MpcVal<F>, b: &MpcVal<F>) -> MpcVal<F> {
+        match (a.shared, b.shared) {
+            (true, true) | (false, false) => {
+                a.val -= &b.val;
+                a
+            }
+            (true, false) => {
+                if self.talk_first {
+                    a.val -= &b.val;
+                }
+                a
+            }
+            (false, true) => {
+                a.shared = true;
+                if self.talk_first {
+                    a.val -= &b.val;
+                }
+                a
+            }
+        }
+    }
+
+    fn field_publicize<F: Field>(&mut self, a: MpcVal<F>) -> MpcVal<F> {
+        assert!(a.shared);
+        let mut other_val = self.exchange(a.val.clone());
+        other_val += a.val;
+        MpcVal::from_public(other_val)
+    }
+
     fn stats(&self) -> ChannelStats {
         ChannelStats {
             bytes_recv: self.bytes_recv,
@@ -139,7 +238,7 @@ impl FieldChannel {
 
 /// Initialize the MPC
 pub fn init<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2, talk_first: bool) {
-    let mut ch = CH.lock().unwrap();
+    let mut ch = get_ch!();
     assert!(
         ch.stream.is_none(),
         "FieldChannel should no be re-intialized. Did you call init(..) twice?"
@@ -149,37 +248,29 @@ pub fn init<A1: ToSocketAddrs, A2: ToSocketAddrs>(self_: A1, peer: A2, talk_firs
 
 /// Exchange serializable element with the other party.
 pub fn exchange<F: CanonicalSerialize + CanonicalDeserialize>(f: F) -> F {
-    CH.lock().expect("Poisoned FieldChannel").exchange(f)
+    get_ch!().exchange(f)
 }
 
 /// Exchange serializable element with the other party.
 pub fn exchange_bytes(f: Vec<u8>) -> Vec<u8> {
-    CH.lock().expect("Poisoned FieldChannel").exchange_bytes(f)
+    get_ch!().exchange_bytes(f)
 }
 
 /// Are you the first party in the MPC?
 pub fn am_first() -> bool {
-    CH.lock().expect("Poisoned FieldChannel").talk_first
+    get_ch!().talk_first
 }
 
 pub type Triple<F, G, H> = (MpcVal<F>, MpcVal<G>, MpcVal<H>);
 
 /// Get a field triple
 pub fn field_triple<F: Field>() -> Triple<F, F, F> {
-    //TODO
-    if am_first() {
-        (
-            MpcVal::from_shared(F::from(1u8)),
-            MpcVal::from_shared(F::from(1u8)),
-            MpcVal::from_shared(F::from(1u8)),
-        )
-    } else {
-        (
-            MpcVal::from_shared(F::from(0u8)),
-            MpcVal::from_shared(F::from(0u8)),
-            MpcVal::from_shared(F::from(0u8)),
-        )
-    }
+    get_ch!().field_triple()
+}
+
+/// Copute a field product over SS data
+pub fn field_mul<F: Field>(a: MpcVal<F>, b: MpcVal<F>) -> MpcVal<F> {
+    get_ch!().field_mul(a, b)
 }
 
 //impl<F: Field, C: AffineCurve<ScalarField=F>> Triple<F, C> for C {

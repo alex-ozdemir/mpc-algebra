@@ -3,11 +3,9 @@ use log::debug;
 mod mpc;
 
 use ark_bls12_377::Fr;
-use ark_ff::{FftField, Field};
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
 use ark_serialize::CanonicalSerialize;
-use ark_std::rand::Rng;
 use ark_std::rand::SeedableRng;
 use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -112,6 +110,7 @@ impl Computation {
                 println!("Query at: {}", i);
                 let (value, pf) = F::open_at(&inputs[..], &k, i);
                 let v = F::check_opening(&c, pf, i, value);
+                assert!(v);
                 println!("Valid proof: {}", v);
                 vec![]
             }

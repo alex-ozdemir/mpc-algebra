@@ -242,17 +242,7 @@ impl<F: Field> MulAssign<MpcVal<F>> for MpcVal<F> {
     fn mul_assign(&mut self, other: MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, true) => {
-                // x * y = z
-                let (x, y, z) = channel::field_triple();
-                let mut xa = std::mem::replace(self, z);
-                xa += &x;
-                let xa = xa.publicize();
-                let mut by = other.clone();
-                by += &y;
-                let by = by.publicize();
-                *self -= x * &by;
-                *self -= y * &xa;
-                *self += xa * by;
+                *self = channel::field_mul(*self, other);
             }
             _ => self.val.mul_assign(other.val),
         };
@@ -262,24 +252,10 @@ impl<F: Field> MulAssign<MpcVal<F>> for MpcVal<F> {
 
 impl<F: Field> Mul<MpcVal<F>> for MpcVal<F> {
     type Output = MpcVal<F>;
-    fn mul(mut self, other: MpcVal<F>) -> Self::Output {
+    fn mul(self, other: MpcVal<F>) -> Self::Output {
         Self::Output::new(
             match (self.shared, other.shared) {
-                (true, true) => {
-                    // x * y = z
-                    let (x, y, z) = channel::field_triple();
-                    let mut xa = std::mem::replace(&mut self, z);
-                    xa += &x;
-                    let xa = xa.publicize();
-                    let mut by = other.clone();
-                    by += &y;
-                    let by = by.publicize();
-                    self -= x * &by;
-                    self -= y * &xa;
-                    self += xa * by;
-                    self *= other;
-                    self.val
-                }
+                (true, true) => channel::field_mul(self, other).val,
                 _ => self.val.mul(other.val),
             },
             self.shared || other.shared,
@@ -291,29 +267,19 @@ impl<'a, F: Field> MulAssign<&'a MpcVal<F>> for MpcVal<F> {
     fn mul_assign(&mut self, other: &'a MpcVal<F>) {
         match (self.shared, other.shared) {
             (true, true) => {
-                // x * y = z
-                let (x, y, z) = channel::field_triple();
-                let mut xa = std::mem::replace(self, z);
-                xa += &x;
-                let xa = xa.publicize();
-                let mut by = other.clone();
-                by += &y;
-                let by = by.publicize();
-                *self -= x * &by;
-                *self -= y * &xa;
-                *self += xa * by;
+                *self = channel::field_mul(*self, *other);
             }
             _ => self.val.mul_assign(&other.val),
         };
         self.shared = self.shared || other.shared;
     }
 }
-impl<'a, G, H, F: Mul<&'a G, Output = H>> Mul<&'a MpcVal<G>> for MpcVal<F> {
-    type Output = MpcVal<H>;
-    fn mul(self, other: &'a MpcVal<G>) -> Self::Output {
+impl<'a, F: Field> Mul<&'a MpcVal<F>> for MpcVal<F> {
+    type Output = MpcVal<F>;
+    fn mul(self, other: &'a MpcVal<F>) -> Self::Output {
         Self::Output::new(
             match (self.shared, other.shared) {
-                (true, true) => unimplemented!("ss mul"),
+                (true, true) => channel::field_mul(self, *other).val,
                 _ => self.val.mul(&other.val),
             },
             self.shared || other.shared,
@@ -855,6 +821,7 @@ impl<
     }
 }
 
+
 /// Vector-Commitable Field
 pub trait ComField: FftField {
     type Commitment: ark_serialize::CanonicalSerialize;
@@ -886,7 +853,7 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
                 let mut bytes_out = Vec::new();
                 v.val.serialize(&mut bytes_out).unwrap();
                 let o = sha2::Sha256::digest(&bytes_out[..]).as_slice().to_owned();
-                //debug!("Hash {} {}: {:?}", vs.len(), i, o);
+                debug!("Hash {} {}: {:?}", vs.len(), i, o);
                 o
             })
             .collect();
@@ -899,7 +866,7 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
                 h.update(&hashes[2 * i]);
                 h.update(&hashes[2 * i + 1]);
                 new.push(h.finalize().as_slice().to_owned());
-                //debug!("Hash {} {}: {:?}", hashes.len() / 2, i, new[new.len() - 1]);
+                debug!("Hash {} {}: {:?}", hashes.len() / 2, i, new[new.len() - 1]);
             }
             tree.push(std::mem::replace(&mut hashes, new));
         }
@@ -916,7 +883,7 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
         let other_f = channel::exchange(self_f.clone());
         let mut siblings = Vec::new();
         for level in 0..tree.len() {
-            //debug!("sib {}: {:?}", level, tree[level][i^1]);
+            debug!("sib {}: {:?}", level, tree[level][i^1]);
             siblings.push(tree[level][i ^ 1].clone());
             i /= 2;
         }
@@ -949,8 +916,8 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
         let mut hash1 = Vec::new();
         p.1.serialize(&mut hash1).unwrap();
         hash1 = sha2::Sha256::digest(&hash1).as_slice().to_owned();
-        //debug!("Hash init0: {:?}", hash0);
-        //debug!("Hash init1: {:?}", hash1);
+        debug!("Hash init0: {:?}", hash0);
+        debug!("Hash init1: {:?}", hash1);
         for (j, (sib0, sib1)) in p.2.into_iter().enumerate() {
             let mut h0 = sha2::Sha256::default();
             let mut h1 = sha2::Sha256::default();
@@ -967,8 +934,8 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
             }
             hash0 = h0.finalize().as_slice().to_owned();
             hash1 = h1.finalize().as_slice().to_owned();
-            //debug!("Hash0: {:?}", hash0);
-            //debug!("Hash1: {:?}", hash1);
+            debug!("Hash0: {:?}", hash0);
+            debug!("Hash1: {:?}", hash1);
         }
         &(hash1, hash0) == c
     }
