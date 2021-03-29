@@ -7,11 +7,16 @@ use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::SeedableRng;
+use ark_ec::AffineCurve;
+use ark_ff::Zero;
+use ark_ec::group::Group;
+use ark_ec::ProjectiveCurve;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use mpc::channel;
 use mpc::ComField;
 use mpc::MpcVal;
+use mpc::MpcCurve;
 
 use clap::arg_enum;
 use merlin::Transcript;
@@ -26,6 +31,7 @@ arg_enum! {
         Commit,
         Merkle,
         Fri,
+        DH,
     }
 }
 
@@ -67,7 +73,42 @@ struct Opt {
 }
 
 impl Computation {
-    fn run<F: ComField>(&self, mut inputs: Vec<F>) -> Vec<F> {
+    fn should_run_dh(&self) -> bool {
+        match self {
+            Computation::DH => true,
+            _ => false,
+        }
+    }
+    fn run_gp<G: ProjectiveCurve + mpc::MpcWire>(&self, mut inputs: Vec<<G as Group>::ScalarField>) -> Vec<G> {
+        println!("Inputs:");
+        for (i, v) in inputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+        let outputs = match self {
+            Computation::DH => {
+                assert_eq!(3, inputs.len());
+                let a = inputs[0];
+                let b = inputs[1];
+                let c = inputs[2];
+                let g = G::prime_subgroup_generator();
+                let ga = <G as Group>::mul(&g, &a);
+                let gb = <G as Group>::mul(&g, &b);
+                let gc = <G as Group>::mul(&g, &c);
+                let gcc = ga + gb;
+                let gc = gc.publicize();
+                let gcc = gcc.publicize();
+                assert_eq!(gc, gcc);
+                vec![]
+            }
+            c => unimplemented!("Cannot run_dh {:?}", c),
+        };
+        println!("Outputs:");
+        for (i, v) in outputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+        outputs
+    }
+    fn run_field<F: ComField>(&self, mut inputs: Vec<F>) -> Vec<F> {
         println!("Inputs:");
         for (i, v) in inputs.iter().enumerate() {
             println!("  {}: {}", i, v);
@@ -217,6 +258,7 @@ impl Computation {
                 }
                 vec![]
             }
+            c => unimplemented!("Cannot run_field {:?}", c),
         };
         println!("Outputs:");
         for (i, v) in outputs.iter().enumerate() {
@@ -227,6 +269,10 @@ impl Computation {
 }
 
 type MFr = MpcVal<Fr>;
+type G1 = ark_bls12_377::G1Projective;
+type MG1 = MpcCurve<G1>;
+type G1Scalar = <G1 as ProjectiveCurve>::ScalarField;
+type MG1Scalar = MpcVal<G1Scalar>;
 
 fn main() -> () {
     let opt = Opt::from_args();
@@ -251,19 +297,36 @@ fn main() -> () {
         .unwrap();
     channel::init(self_addr, peer_addr, opt.party == 0);
     debug!("Start");
-    let inputs = opt
-        .args
-        .iter()
-        .map(|i| MFr::from_shared(Fr::from(*i)))
-        .collect::<Vec<MFr>>();
-    let outputs = opt.computation.run(inputs);
-    let public_outputs = outputs
-        .into_iter()
-        .map(|c| c.publicize())
-        .collect::<Vec<_>>();
-    println!("Public Outputs:");
-    for (i, v) in public_outputs.iter().enumerate() {
-        println!("  {}: {}", i, v);
+    if opt.computation.should_run_dh() {
+        let inputs = opt
+            .args
+            .iter()
+            .map(|i| MG1Scalar::from_shared(G1Scalar::from(*i)))
+            .collect::<Vec<MFr>>();
+        let outputs = opt.computation.run_gp::<MpcCurve<ark_bls12_377::G1Projective>>(inputs);
+        let public_outputs = outputs
+           .into_iter()
+           .map(|c: MG1| c.publicize())
+           .collect::<Vec<_>>();
+        println!("Public Outputs:");
+        for (i, v) in public_outputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+    } else {
+        let inputs = opt
+            .args
+            .iter()
+            .map(|i| MFr::from_shared(Fr::from(*i)))
+            .collect::<Vec<MFr>>();
+        let outputs = opt.computation.run_field(inputs);
+        let public_outputs = outputs
+            .into_iter()
+            .map(|c| c.publicize())
+            .collect::<Vec<_>>();
+        println!("Public Outputs:");
+        for (i, v) in public_outputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
     }
     debug!("Stats: {:#?}", channel::stats());
     channel::deinit();

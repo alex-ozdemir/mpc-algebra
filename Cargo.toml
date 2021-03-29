@@ -15,6 +15,7 @@ ark-ec = { git = "https://github.com/arkworks-rs/algebra", default-features = fa
 ark-poly = { git = "https://github.com/arkworks-rs/algebra", default-features = false }
 ark-serialize = { git = "https://github.com/arkworks-rs/algebra", default-features = false, features = [ "derive" ] }
 ark-std = { git = "https://github.com/arkworks-rs/utils", default-features = false }
+ark-groth16 = { git = "https://github.com/arkworks-rs/groth16", default-features = false }
 lazy_static = "1"
 derivative = { version = "2.0", features = ["use_core"], optional = true}
 log = "0.4"

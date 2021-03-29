@@ -5,8 +5,9 @@ use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 
 use super::MpcVal;
-//use ark_ec::AffineCurve;
+use super::MpcCurve;
 use ark_ff::Field;
+use ark_ec::ProjectiveCurve;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 lazy_static! {
@@ -227,6 +228,96 @@ impl FieldChannel {
         MpcVal::from_public(other_val)
     }
 
+    fn curve_scalar_triple<G: ProjectiveCurve>(&self) -> (MpcCurve<G>, MpcVal<G::ScalarField>, MpcCurve<G>) {
+        let (fa, fb, fc) = self.field_triple();
+        let mut ca = MpcCurve::from_public(G::prime_subgroup_generator());
+        ca.val *= fa.val;
+        let mut cc = MpcCurve::from_public(G::prime_subgroup_generator());
+        cc.val *= fc.val;
+        (ca, fb, cc)
+    }
+
+    fn curve_mul<G: ProjectiveCurve>(&mut self, mut a: MpcCurve<G>, b: MpcVal<G::ScalarField>) -> MpcCurve<G> {
+        if a.shared && b.shared {
+            // x * y = z
+            let (mut x, y, mut z) = self.curve_scalar_triple();
+            // x + a
+            let xa = self.curve_add(a, &x);
+            let mut xa = self.curve_publicize(xa);
+            // y + b
+            let yb = self.field_add(b, &y);
+            let yb = self.field_publicize(yb);
+            let mut ybxa = xa.clone();
+            ybxa.val *= yb.val.clone();
+            // (y + b) * x
+            x.val *= yb.val;
+            // y * (x + a)
+            xa.val *= y.val;
+            // (y + b) * (x + a)
+            z.val -= xa.val;
+            z.val -= x.val;
+            if self.talk_first {
+                z.val += ybxa.val;
+            }
+            z
+        } else {
+            a.val *= b.val;
+            a.shared = a.shared || b.shared;
+            a
+        }
+    }
+
+    fn curve_add<F: ProjectiveCurve>(&mut self, mut a: MpcCurve<F>, b: &MpcCurve<F>) -> MpcCurve<F> {
+        match (a.shared, b.shared) {
+            (true, true) | (false, false) => {
+                a.val += &b.val;
+                a
+            }
+            (true, false) => {
+                if self.talk_first {
+                    a.val += &b.val;
+                }
+                a
+            }
+            (false, true) => {
+                a.shared = true;
+                if self.talk_first {
+                    a.val += &b.val;
+                }
+                a
+            }
+        }
+    }
+
+    fn curve_sub<F: ProjectiveCurve>(&mut self, mut a: MpcCurve<F>, b: &MpcCurve<F>) -> MpcCurve<F> {
+        match (a.shared, b.shared) {
+            (true, true) | (false, false) => {
+                a.val -= &b.val;
+                a
+            }
+            (true, false) => {
+                if self.talk_first {
+                    a.val -= &b.val;
+                }
+                a
+            }
+            (false, true) => {
+                a.shared = true;
+                if self.talk_first {
+                    a.val -= &b.val;
+                }
+                a
+            }
+        }
+    }
+
+    fn curve_publicize<F: ProjectiveCurve>(&mut self, a: MpcCurve<F>) -> MpcCurve<F> {
+        assert!(a.shared);
+        let mut other_val = self.exchange(a.val.clone());
+        other_val += a.val;
+        MpcCurve::from_public(other_val)
+    }
+
     fn stats(&self) -> ChannelStats {
         ChannelStats {
             bytes_recv: self.bytes_recv,
@@ -271,6 +362,11 @@ pub fn field_triple<F: Field>() -> Triple<F, F, F> {
 /// Copute a field product over SS data
 pub fn field_mul<F: Field>(a: MpcVal<F>, b: MpcVal<F>) -> MpcVal<F> {
     get_ch!().field_mul(a, b)
+}
+
+/// Copute a field-curve product over SS data
+pub fn curve_mul<G: ProjectiveCurve>(a: MpcCurve<G>, b: MpcVal<G::ScalarField>) -> MpcCurve<G> {
+    get_ch!().curve_mul(a, b)
 }
 
 //impl<F: Field, C: AffineCurve<ScalarField=F>> Triple<F, C> for C {

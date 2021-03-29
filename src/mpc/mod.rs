@@ -1,5 +1,5 @@
 use ark_bls12_377::Bls12_377;
-use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_ec::{group::Group, AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::{FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
 use ark_serialize::*;
 use ark_std::UniformRand;
@@ -448,9 +448,8 @@ impl<F: Field> MulAssign<MpcVal<F>> for MpcVal<F> {
 }
 
 impl<G: ProjectiveCurve> MulAssign<MpcVal<G::ScalarField>> for MpcCurve<G> {
-    fn mul_assign(&mut self, _other: MpcVal<G::ScalarField>) {
-        unimplemented!("curve mult")
-        //*self = self.mul(other.into_repr())
+    fn mul_assign(&mut self, other: MpcVal<G::ScalarField>) {
+        *self = channel::curve_mul(*self, other);
     }
 }
 
@@ -708,65 +707,102 @@ shared_sqrt_field!(ark_bls12_377::Fr);
 shared_field!(ark_bls12_377::Fq);
 shared_prime_field!(ark_bls12_377::Fq, ark_ff::BigInteger384);
 shared_sqrt_field!(ark_bls12_377::Fq);
+//shared_field!(<ark_bls12_377::Bls12_377 as PairingEngine>::Fqk);
+//shared_field!(<ark_bls12_377::Bls12_377 as PairingEngine>::Fqe);
 
 // shared_field!(ark_bls12_377::Fq2);
 // shared_sqrt_field!(ark_bls12_377::Fq2);
 
-impl AffineCurve for MpcVal<ark_bls12_377::G1Affine> {
-    type ScalarField = MpcVal<ark_bls12_377::Fr>;
-    const COFACTOR: &'static [u64] = ark_bls12_377::G1Affine::COFACTOR;
-    type BaseField = MpcVal<ark_bls12_377::Fq>;
-    type Projective = MpcCurve<ark_bls12_377::G1Projective>;
-    fn prime_subgroup_generator() -> Self {
-        todo!()
-    }
-    fn from_random_bytes(_: &[u8]) -> Option<Self> {
-        todo!()
-    }
-    fn mul<S: Into<<Self::ScalarField as PrimeField>::BigInt>>(
-        &self,
-        _: S,
-    ) -> <Self as AffineCurve>::Projective {
-        todo!()
-    }
-    fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
-        todo!()
-    }
-    fn mul_by_cofactor_inv(&self) -> Self {
-        todo!()
+macro_rules! curve_impl {
+    ($curve:path, $curve_proj:path, $base:path, $scalar:path, $cofactor:path) => {
+
+        impl AffineCurve for MpcVal<$curve> {
+            type ScalarField = MpcVal<$scalar>;
+            const COFACTOR: &'static [u64] = $cofactor;
+            type BaseField = MpcVal<$base>;
+            type Projective = MpcCurve<$curve_proj>;
+            fn prime_subgroup_generator() -> Self {
+                MpcVal::from_public(<$curve as AffineCurve>::prime_subgroup_generator())
+            }
+            fn from_random_bytes(_: &[u8]) -> Option<Self> {
+                todo!("AffineCurve::from_random_bytes")
+            }
+            fn mul<S: Into<<Self::ScalarField as PrimeField>::BigInt>>(
+                &self,
+                _: S,
+            ) -> <Self as AffineCurve>::Projective {
+                todo!("AffineCurve::mul")
+            }
+            fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
+                todo!("AffineCurve::mul_by_cofactor_to_projective")
+            }
+            fn mul_by_cofactor_inv(&self) -> Self {
+                todo!("AffineCurve::mul_by_cofactor_inv")
+            }
+        }
+        impl From<MpcCurve<$curve_proj>> for MpcVal<$curve> {
+            fn from(p: MpcCurve<$curve_proj>) -> Self {
+                Self::new(p.val.into(), p.shared)
+            }
+        }
+        impl From<MpcVal<$curve>> for MpcCurve<$curve_proj> {
+            fn from(p: MpcVal<$curve>) -> Self {
+                Self::new(p.val.into(), p.shared)
+            }
+        }
+        impl ProjectiveCurve for MpcCurve<$curve_proj> {
+            const COFACTOR: &'static [u64] = $cofactor;
+            type ScalarField = MpcVal<$scalar>;
+            type BaseField = MpcVal<$base>;
+            type Affine = MpcVal<$curve>;
+            fn prime_subgroup_generator() -> Self {
+                Self::from_public(<$curve_proj as ProjectiveCurve>::prime_subgroup_generator())
+            }
+            fn batch_normalization(_: &mut [Self]) {
+                todo!()
+            }
+            fn is_normalized(&self) -> bool {
+                todo!()
+            }
+            fn double_in_place(&mut self) -> &mut Self {
+                <$curve_proj as ProjectiveCurve>::double_in_place(&mut self.val);
+                self
+            }
+            fn add_assign_mixed(&mut self, _: &<Self as ProjectiveCurve>::Affine) {
+                todo!()
+            }
+        }
+        impl MpcWire for MpcCurve<$curve_proj> {
+            fn publicize(self) -> Self {
+                self.publicize()
+            }
+        }
     }
 }
-impl From<MpcCurve<ark_bls12_377::G1Projective>> for MpcVal<ark_bls12_377::G1Affine> {
-    fn from(p: MpcCurve<ark_bls12_377::G1Projective>) -> Self {
-        Self::new(p.val.into(), p.shared)
-    }
-}
-impl From<MpcVal<ark_bls12_377::G1Affine>> for MpcCurve<ark_bls12_377::G1Projective> {
-    fn from(p: MpcVal<ark_bls12_377::G1Affine>) -> Self {
-        Self::new(p.val.into(), p.shared)
-    }
-}
-impl ProjectiveCurve for MpcCurve<ark_bls12_377::G1Projective> {
-    const COFACTOR: &'static [u64] = ark_bls12_377::G1Projective::COFACTOR;
-    type ScalarField = MpcVal<ark_bls12_377::Fr>;
-    type BaseField = MpcVal<ark_bls12_377::Fq>;
-    type Affine = MpcVal<ark_bls12_377::G1Affine>;
-    fn prime_subgroup_generator() -> Self {
-        todo!()
-    }
-    fn batch_normalization(_: &mut [Self]) {
-        todo!()
-    }
-    fn is_normalized(&self) -> bool {
-        todo!()
-    }
-    fn double_in_place(&mut self) -> &mut Self {
-        todo!()
-    }
-    fn add_assign_mixed(&mut self, _: &<Self as ProjectiveCurve>::Affine) {
-        todo!()
-    }
-}
+
+// macro_rules! group_impl {
+//     ($gp:path, $scalar:path) => {
+// 
+//         impl Group for MpcCurve<$gp> {
+//             type ScalarField = MpcVal<$scalar>;
+//             fn double_in_place<'a> (&'a mut self) -> &'a mut Self {
+//                 <$gp as Group>::double_in_place(&mut self.val);
+//                 self
+//             }
+//             fn double(&self) -> Self {
+//                 Self::new(
+//                     self.val.double(),
+//                     self.shared,
+//                 )
+//             }
+//         }
+//     }
+// }
+
+curve_impl!(ark_bls12_377::G1Affine, ark_bls12_377::G1Projective, ark_bls12_377::Fq, ark_bls12_377::Fr, ark_bls12_377::G1Affine::COFACTOR);
+//group_impl!(ark_bls12_377::G1Projective, ark_bls12_377::Fr);
+//curve_impl!(ark_bls12_377::G2Affine, ark_bls12_377::G2Projective, ark_bls12_377::Fq, ark_bls12_377::Fr, ark_bls12_377::G1Affine::COFACTOR);
+
 //    type ScalarField: PrimeField + SquareRootField + Into<<Self::ScalarField
 // as PrimeField>::BigInt>;    type BaseField: Field;
 //    type Projective: ProjectiveCurve<Affine = Self, ScalarField =
@@ -788,58 +824,63 @@ impl ProjectiveCurve for MpcCurve<ark_bls12_377::G1Projective> {
 //    fn mul_by_cofactor(&self) -> Self { ... }
 //}
 
-/// A wrapper for a pairing engine
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MpcPairingEngine<E: PairingEngine> {
-    inner: E,
-}
+// /// A wrapper for a pairing engine
+// #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+// pub struct MpcPairingEngine<E: PairingEngine> {
+//     inner: E,
+// }
+// 
+// impl PairingEngine for MpcPairingEngine<Bls12_377> {
+//     type Fr = MpcVal<<Bls12_377 as PairingEngine>::Fr>;
+//     type G1Projective = MpcCurve<<Bls12_377 as PairingEngine>::G1Projective>;
+//     type G1Affine = MpcVal<<Bls12_377 as PairingEngine>::G1Affine>;
+//     type G1Prepared = MpcVal<<Bls12_377 as PairingEngine>::G1Prepared>;
+//     type G2Projective = MpcCurve<<Bls12_377 as PairingEngine>::G2Projective>;
+//     type G2Affine = MpcVal<<Bls12_377 as PairingEngine>::G2Affine>;
+//     type G2Prepared = MpcVal<<Bls12_377 as PairingEngine>::G2Prepared>;
+//     type Fq = MpcVal<<Bls12_377 as PairingEngine>::Fq>;
+//     type Fqe = MpcVal<<Bls12_377 as PairingEngine>::Fqe>;
+//     type Fqk = MpcVal<<Bls12_377 as PairingEngine>::Fqk>;
+// 
+//     fn miller_loop<'a, I>(_i: I) -> Self::Fqk
+//     where
+//         I: IntoIterator<Item = &'a (Self::G1Prepared, Self::G2Prepared)>,
+//     {
+//         unimplemented!()
+//         // <Bls12_377 as PairingEngine>::miller_loop(i)
+//     }
+// 
+//     fn final_exponentiation(_f: &Self::Fqk) -> Option<Self::Fqk> {
+//         unimplemented!()
+//         // <Bls12_377 as PairingEngine>::final_exponentiation(f)
+//     }
+// 
+//     /// Computes a product of pairings.
+//     #[must_use]
+//     fn product_of_pairings<'a, I>(_i: I) -> Self::Fqk
+//     where
+//         I: IntoIterator<Item = &'a (Self::G1Prepared, Self::G2Prepared)>,
+//     {
+//         // TODO: MPC!
+//         // <Bls12_377 as PairingEngine>::product_of_pairings(i)
+//         unimplemented!()
+//     }
+// 
+//     /// Performs multiple pairing operations
+//     #[must_use]
+//     fn pairing<G1, G2>(p: G1, q: G2) -> Self::Fqk
+//     where
+//         G1: Into<Self::G1Affine>,
+//         G2: Into<Self::G2Affine>,
+//     {
+//         // TODO: MPC!
+//         <Bls12_377 as PairingEngine>::pairing(p, q)
+//     }
+// }
 
-impl PairingEngine for MpcPairingEngine<Bls12_377> {
-    type Fr = <Bls12_377 as PairingEngine>::Fr;
-    type G1Projective = <Bls12_377 as PairingEngine>::G1Projective;
-    type G1Affine = <Bls12_377 as PairingEngine>::G1Affine;
-    type G1Prepared = <Bls12_377 as PairingEngine>::G1Prepared;
-    type G2Projective = <Bls12_377 as PairingEngine>::G2Projective;
-    type G2Affine = <Bls12_377 as PairingEngine>::G2Affine;
-    type G2Prepared = <Bls12_377 as PairingEngine>::G2Prepared;
-    type Fq = <Bls12_377 as PairingEngine>::Fq;
-    type Fqe = <Bls12_377 as PairingEngine>::Fqe;
-    type Fqk = <Bls12_377 as PairingEngine>::Fqk;
-
-    fn miller_loop<'a, I>(_i: I) -> Self::Fqk
-    where
-        I: IntoIterator<Item = &'a (Self::G1Prepared, Self::G2Prepared)>,
-    {
-        unimplemented!()
-        // <Bls12_377 as PairingEngine>::miller_loop(i)
-    }
-
-    fn final_exponentiation(_f: &Self::Fqk) -> Option<Self::Fqk> {
-        unimplemented!()
-        // <Bls12_377 as PairingEngine>::final_exponentiation(f)
-    }
-
-    /// Computes a product of pairings.
-    #[must_use]
-    fn product_of_pairings<'a, I>(_i: I) -> Self::Fqk
-    where
-        I: IntoIterator<Item = &'a (Self::G1Prepared, Self::G2Prepared)>,
-    {
-        // TODO: MPC!
-        // <Bls12_377 as PairingEngine>::product_of_pairings(i)
-        unimplemented!()
-    }
-
-    /// Performs multiple pairing operations
-    #[must_use]
-    fn pairing<G1, G2>(p: G1, q: G2) -> Self::Fqk
-    where
-        G1: Into<Self::G1Affine>,
-        G2: Into<Self::G2Affine>,
-    {
-        // TODO: MPC!
-        <Bls12_377 as PairingEngine>::pairing(p, q)
-    }
+/// Vector-Commitable Field
+pub trait MpcWire {
+    fn publicize(self) -> Self;
 }
 
 /// Vector-Commitable Field
