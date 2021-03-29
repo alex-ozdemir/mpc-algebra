@@ -5,6 +5,7 @@ mod mpc;
 use ark_bls12_377::Fr;
 use ark_ec::group::Group;
 use ark_ec::ProjectiveCurve;
+use ark_ec::PairingEngine;
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
 use ark_serialize::CanonicalSerialize;
@@ -16,6 +17,7 @@ use mpc::ComField;
 use mpc::MpcCurve;
 use mpc::MpcCurve2;
 use mpc::MpcVal;
+use mpc::MpcWire;
 
 use clap::arg_enum;
 use merlin::Transcript;
@@ -30,8 +32,16 @@ arg_enum! {
         Commit,
         Merkle,
         Fri,
-        DH,
+        Dh,
+        PairingDh,
     }
+}
+
+enum ComputationDomain {
+    G1,
+    G2,
+    Field,
+    Pairing,
 }
 
 #[derive(Debug, StructOpt)]
@@ -75,23 +85,56 @@ struct Opt {
     args: Vec<u64>,
 }
 
-impl Computation {
-    fn should_run_dh(&self) -> bool {
-        match self {
-            Computation::DH => true,
-            _ => false,
+impl Opt {
+    fn domain(&self) -> ComputationDomain {
+        match &self.computation {
+            Computation::Dh => if self.use_g2 { ComputationDomain::G2 }  else {
+                ComputationDomain::G1},
+
+            Computation::PairingDh => ComputationDomain::Pairing,
+            _ => ComputationDomain::Field,
         }
+    }
+}
+
+impl Computation {
+    fn run_pairing<P: PairingEngine>(
+        &self,
+        inputs: Vec<<P as PairingEngine>::Fr>,
+    ) -> Vec<<P as PairingEngine>::Fr>
+        where <P as PairingEngine>::Fr: mpc::MpcWire
+            , <P as PairingEngine>::Fqk: mpc::MpcWire
+    {
+        let outputs = match self {
+            Computation::PairingDh => {
+                assert_eq!(3, inputs.len());
+                let a = inputs[0];
+                let b = inputs[1];
+                let c = inputs[2];
+                let g1 = <P as PairingEngine>::G1Projective::prime_subgroup_generator();
+                let g2 = <P as PairingEngine>::G2Projective::prime_subgroup_generator();
+                let g1a = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &a);
+                let g2b = <<P as PairingEngine>::G2Projective as Group>::mul(&g2, &b);
+                let g1c = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &c);
+                let gc = P::pairing(g1c, g2).publicize();
+                let gcc = P::pairing(g1a, g2b).publicize();
+                assert_eq!(gc, gcc);
+                vec![]
+            }
+            c => unimplemented!("Cannot run_pairing {:?}", c),
+        };
+        println!("Outputs:");
+        for (i, v) in outputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+        outputs
     }
     fn run_gp<G: ProjectiveCurve + mpc::MpcWire>(
         &self,
         inputs: Vec<<G as Group>::ScalarField>,
     ) -> Vec<G> {
-        println!("Inputs:");
-        for (i, v) in inputs.iter().enumerate() {
-            println!("  {}: {}", i, v);
-        }
         let outputs = match self {
-            Computation::DH => {
+            Computation::Dh => {
                 assert_eq!(3, inputs.len());
                 let a = inputs[0];
                 let b = inputs[1];
@@ -115,10 +158,6 @@ impl Computation {
         outputs
     }
     fn run_field<F: ComField>(&self, mut inputs: Vec<F>) -> Vec<F> {
-        println!("Inputs:");
-        for (i, v) in inputs.iter().enumerate() {
-            println!("  {}: {}", i, v);
-        }
         let outputs = match self {
             Computation::Fft => {
                 let d = Radix2EvaluationDomain::<F>::new(inputs.len()).unwrap();
@@ -289,6 +328,7 @@ fn main() -> () {
     } else {
         env_logger::init();
     }
+    let domain = opt.domain();
     let self_addr = (opt.host, opt.port)
         .to_socket_addrs()
         .unwrap()
@@ -303,28 +343,28 @@ fn main() -> () {
         .unwrap();
     channel::init(self_addr, peer_addr, opt.party == 0);
     debug!("Start");
-    if opt.computation.should_run_dh() {
-        if opt.use_g2 {
-            let inputs = opt
-                .args
-                .iter()
-                .map(|i| MFr::from_shared(Fr::from(*i)))
-                .collect::<Vec<MFr>>();
-            let outputs = opt.computation.run_gp::<MG2>(inputs);
+        let inputs = opt
+            .args
+            .iter()
+            .map(|i| MFr::from_shared(Fr::from(*i)))
+            .collect::<Vec<MFr>>();
+        println!("Inputs:");
+        for (i, v) in inputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+    match domain {
+        ComputationDomain::Field => {
+            let outputs = opt.computation.run_field(inputs);
             let public_outputs = outputs
                 .into_iter()
-                .map(|c: MG2| c.publicize())
+                .map(|c| c.publicize())
                 .collect::<Vec<_>>();
             println!("Public Outputs:");
             for (i, v) in public_outputs.iter().enumerate() {
                 println!("  {}: {}", i, v);
             }
-        } else {
-            let inputs = opt
-                .args
-                .iter()
-                .map(|i| MFr::from_shared(Fr::from(*i)))
-                .collect::<Vec<MFr>>();
+        }
+        ComputationDomain::G1 => {
             let outputs = opt
                 .computation
                 .run_gp::<MG1>(inputs);
@@ -337,20 +377,31 @@ fn main() -> () {
                 println!("  {}: {}", i, v);
             }
         }
-    } else {
-        let inputs = opt
-            .args
-            .iter()
-            .map(|i| MFr::from_shared(Fr::from(*i)))
-            .collect::<Vec<MFr>>();
-        let outputs = opt.computation.run_field(inputs);
-        let public_outputs = outputs
-            .into_iter()
-            .map(|c| c.publicize())
-            .collect::<Vec<_>>();
-        println!("Public Outputs:");
-        for (i, v) in public_outputs.iter().enumerate() {
-            println!("  {}: {}", i, v);
+        ComputationDomain::G2 => {
+            let outputs = opt
+                .computation
+                .run_gp::<MG2>(inputs);
+            let public_outputs = outputs
+                .into_iter()
+                .map(|c: MG2| c.publicize())
+                .collect::<Vec<_>>();
+            println!("Public Outputs:");
+            for (i, v) in public_outputs.iter().enumerate() {
+                println!("  {}: {}", i, v);
+            }
+        }
+        ComputationDomain::Pairing => {
+            let outputs = opt
+                .computation
+                .run_pairing::<mpc::MpcPairingEngine<ark_bls12_377::Bls12_377>>(inputs);
+            let public_outputs = outputs
+                .into_iter()
+                .map(|c: MFr| c.publicize())
+                .collect::<Vec<_>>();
+            println!("Public Outputs:");
+            for (i, v) in public_outputs.iter().enumerate() {
+                println!("  {}: {}", i, v);
+            }
         }
     }
     debug!("Stats: {:#?}", channel::stats());

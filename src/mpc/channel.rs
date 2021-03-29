@@ -4,10 +4,9 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 
-use super::MpcVal;
-use super::MpcCurve;
+use super::{MpcMulVal, MpcVal};
+use ark_ec::{PairingEngine, ProjectiveCurve};
 use ark_ff::Field;
-use ark_ec::ProjectiveCurve;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 lazy_static! {
@@ -158,12 +157,13 @@ impl FieldChannel {
         if a.shared && b.shared {
             // x * y = z
             let (x, y, mut z) = self.field_triple();
-            // x + aA
+            // x + a
             let xa = self.field_add(a, &x);
             let xa = self.field_publicize(xa);
             // y + b
             let yb = self.field_add(b, &y);
             let yb = self.field_publicize(yb);
+            // xy - (x+a)y - x(y+b) + (x+a)(y+b) = ab
             z.val -= y.val * &xa.val;
             z.val -= x.val * &yb.val;
             if self.talk_first {
@@ -229,16 +229,20 @@ impl FieldChannel {
         MpcVal::from_public(other_val)
     }
 
-    fn curve_scalar_triple<G: ProjectiveCurve>(&self) -> (MpcCurve<G>, MpcVal<G::ScalarField>, MpcCurve<G>) {
+    fn curve_scalar_triple<G: ProjectiveCurve>(&self) -> Triple<G, G::ScalarField, G> {
         let (fa, fb, fc) = self.field_triple();
-        let mut ca = MpcCurve::from_public(G::prime_subgroup_generator());
+        let mut ca = MpcVal::from_shared(G::prime_subgroup_generator());
         ca.val *= fa.val;
-        let mut cc = MpcCurve::from_public(G::prime_subgroup_generator());
+        let mut cc = MpcVal::from_shared(G::prime_subgroup_generator());
         cc.val *= fc.val;
         (ca, fb, cc)
     }
 
-    fn curve_mul<G: ProjectiveCurve>(&mut self, mut a: MpcCurve<G>, b: MpcVal<G::ScalarField>) -> MpcCurve<G> {
+    fn curve_mul<G: ProjectiveCurve>(
+        &mut self,
+        mut a: MpcVal<G>,
+        b: MpcVal<G::ScalarField>,
+    ) -> MpcVal<G> {
         if a.shared && b.shared {
             // x * y = z
             let (mut x, y, mut z) = self.curve_scalar_triple();
@@ -268,7 +272,7 @@ impl FieldChannel {
         }
     }
 
-    fn curve_add<F: ProjectiveCurve>(&mut self, mut a: MpcCurve<F>, b: &MpcCurve<F>) -> MpcCurve<F> {
+    fn curve_add<F: ProjectiveCurve>(&mut self, mut a: MpcVal<F>, b: &MpcVal<F>) -> MpcVal<F> {
         match (a.shared, b.shared) {
             (true, true) | (false, false) => {
                 a.val += &b.val;
@@ -291,7 +295,7 @@ impl FieldChannel {
     }
 
     #[allow(dead_code)]
-    fn curve_sub<F: ProjectiveCurve>(&mut self, mut a: MpcCurve<F>, b: &MpcCurve<F>) -> MpcCurve<F> {
+    fn curve_sub<F: ProjectiveCurve>(&mut self, mut a: MpcVal<F>, b: &MpcVal<F>) -> MpcVal<F> {
         match (a.shared, b.shared) {
             (true, true) | (false, false) => {
                 a.val -= &b.val;
@@ -313,11 +317,56 @@ impl FieldChannel {
         }
     }
 
-    fn curve_publicize<F: ProjectiveCurve>(&mut self, a: MpcCurve<F>) -> MpcCurve<F> {
+    fn curve_publicize<F: ProjectiveCurve>(&mut self, a: MpcVal<F>) -> MpcVal<F> {
         assert!(a.shared);
         let mut other_val = self.exchange(a.val.clone());
         other_val += a.val;
-        MpcCurve::from_public(other_val)
+        MpcVal::from_public(other_val)
+    }
+
+    fn pairing_triple<E: PairingEngine>(&self) -> Triple<E::G1Projective, E::G2Projective, E::Fqk> {
+        let (fa, fb, fc) = self.field_triple();
+        let mut g1a = MpcVal::from_public(E::G1Projective::prime_subgroup_generator());
+        g1a.val *= fa.val;
+        let mut g2b = MpcVal::from_public(E::G2Projective::prime_subgroup_generator());
+        g2b.val *= fb.val;
+        let mut g1c = MpcVal::from_public(E::G1Projective::prime_subgroup_generator());
+        g1c.val *= fc.val;
+        let gtc = MpcVal::from_shared(E::pairing(
+            g1c.val,
+            E::G2Projective::prime_subgroup_generator(),
+        ));
+
+        (g1a, g2b, gtc)
+    }
+
+    fn pairing<E: PairingEngine>(
+        &mut self,
+        a: MpcVal<E::G1Projective>,
+        b: MpcVal<E::G2Projective>,
+    ) -> MpcVal<E::Fqk> {
+        if a.shared && b.shared {
+            // x * y = z
+            let (x, y, mut z) = self.pairing_triple::<E>();
+            // x + a
+            let xa = self.curve_add(a, &x);
+            let xa = self.curve_publicize(xa);
+            // y + b
+            let yb = self.curve_add(b, &y);
+            let yb = self.curve_publicize(yb);
+            let xayb = MpcVal::from_public(E::pairing(xa.val, yb.val));
+            let xay = MpcVal::from_shared(E::pairing(xa.val, y.val));
+            let xyb = MpcVal::from_shared(E::pairing(x.val, yb.val));
+            // (y + b) * (x + a)
+            z.val /= xay.val;
+            z.val /= xyb.val;
+            if self.talk_first {
+                z.val *= xayb.val;
+            }
+            z
+        } else {
+            MpcVal::new(E::pairing(a.val, b.val), a.shared || b.shared)
+        }
     }
 
     fn stats(&self) -> ChannelStats {
@@ -368,8 +417,16 @@ pub fn field_mul<F: Field>(a: MpcVal<F>, b: MpcVal<F>) -> MpcVal<F> {
 }
 
 /// Copute a field-curve product over SS data
-pub fn curve_mul<G: ProjectiveCurve>(a: MpcCurve<G>, b: MpcVal<G::ScalarField>) -> MpcCurve<G> {
+pub fn curve_mul<G: ProjectiveCurve>(a: MpcVal<G>, b: MpcVal<G::ScalarField>) -> MpcVal<G> {
     get_ch!().curve_mul(a, b)
+}
+
+/// Copute a pairing over SS data
+pub fn pairing<E: PairingEngine>(
+    a: MpcVal<E::G1Projective>,
+    b: MpcVal<E::G2Projective>,
+) -> MpcVal<E::Fqk> {
+    get_ch!().pairing::<E>(a, b)
 }
 
 //impl<F: Field, C: AffineCurve<ScalarField=F>> Triple<F, C> for C {
