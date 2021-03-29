@@ -3,20 +3,21 @@ use log::debug;
 mod mpc;
 
 use ark_bls12_377::Fr;
+use ark_ec::group::Group;
+use ark_ec::AffineCurve;
+use ark_ec::ProjectiveCurve;
+use ark_ff::Zero;
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::SeedableRng;
-use ark_ec::AffineCurve;
-use ark_ff::Zero;
-use ark_ec::group::Group;
-use ark_ec::ProjectiveCurve;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use mpc::channel;
 use mpc::ComField;
-use mpc::MpcVal;
 use mpc::MpcCurve;
+use mpc::MpcCurve2;
+use mpc::MpcVal;
 
 use clap::arg_enum;
 use merlin::Transcript;
@@ -67,6 +68,10 @@ struct Opt {
     #[structopt()]
     computation: Computation,
 
+    /// Computation to perform
+    #[structopt(long)]
+    use_g2: bool,
+
     /// Input a
     #[structopt()]
     args: Vec<u64>,
@@ -79,7 +84,10 @@ impl Computation {
             _ => false,
         }
     }
-    fn run_gp<G: ProjectiveCurve + mpc::MpcWire>(&self, mut inputs: Vec<<G as Group>::ScalarField>) -> Vec<G> {
+    fn run_gp<G: ProjectiveCurve + mpc::MpcWire>(
+        &self,
+        mut inputs: Vec<<G as Group>::ScalarField>,
+    ) -> Vec<G> {
         println!("Inputs:");
         for (i, v) in inputs.iter().enumerate() {
             println!("  {}: {}", i, v);
@@ -271,8 +279,8 @@ impl Computation {
 type MFr = MpcVal<Fr>;
 type G1 = ark_bls12_377::G1Projective;
 type MG1 = MpcCurve<G1>;
-type G1Scalar = <G1 as ProjectiveCurve>::ScalarField;
-type MG1Scalar = MpcVal<G1Scalar>;
+type G2 = ark_bls12_377::G2Projective;
+type MG2 = MpcCurve2<G2>;
 
 fn main() -> () {
     let opt = Opt::from_args();
@@ -298,19 +306,38 @@ fn main() -> () {
     channel::init(self_addr, peer_addr, opt.party == 0);
     debug!("Start");
     if opt.computation.should_run_dh() {
-        let inputs = opt
-            .args
-            .iter()
-            .map(|i| MG1Scalar::from_shared(G1Scalar::from(*i)))
-            .collect::<Vec<MFr>>();
-        let outputs = opt.computation.run_gp::<MpcCurve<ark_bls12_377::G1Projective>>(inputs);
-        let public_outputs = outputs
-           .into_iter()
-           .map(|c: MG1| c.publicize())
-           .collect::<Vec<_>>();
-        println!("Public Outputs:");
-        for (i, v) in public_outputs.iter().enumerate() {
-            println!("  {}: {}", i, v);
+        if opt.use_g2 {
+            let inputs = opt
+                .args
+                .iter()
+                .map(|i| MFr::from_shared(Fr::from(*i)))
+                .collect::<Vec<MFr>>();
+            let outputs = opt.computation.run_gp::<MG2>(inputs);
+            let public_outputs = outputs
+                .into_iter()
+                .map(|c: MG2| c.publicize())
+                .collect::<Vec<_>>();
+            println!("Public Outputs:");
+            for (i, v) in public_outputs.iter().enumerate() {
+                println!("  {}: {}", i, v);
+            }
+        } else {
+            let inputs = opt
+                .args
+                .iter()
+                .map(|i| MFr::from_shared(Fr::from(*i)))
+                .collect::<Vec<MFr>>();
+            let outputs = opt
+                .computation
+                .run_gp::<MG1>(inputs);
+            let public_outputs = outputs
+                .into_iter()
+                .map(|c: MG1| c.publicize())
+                .collect::<Vec<_>>();
+            println!("Public Outputs:");
+            for (i, v) in public_outputs.iter().enumerate() {
+                println!("  {}: {}", i, v);
+            }
         }
     } else {
         let inputs = opt

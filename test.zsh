@@ -35,3 +35,9 @@ $BIN --port 8001 --peer-host localhost --peer-port 8000 -d dh 0 4 6 --party 0 &
 $BIN --port 8000 --peer-host localhost --peer-port 8001 -d dh 1 2 1 --party 1 &
 
 wait
+
+# DDH triple check (G2)
+$BIN --port 8001 --peer-host localhost --peer-port 8000 -d dh 0 4 6 --party 0 --use-g2 &
+$BIN --port 8000 --peer-host localhost --peer-port 8001 -d dh 1 2 1 --party 1 --use-g2 &
+
+wait
