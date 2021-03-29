@@ -25,6 +25,12 @@ pub struct MpcCurve<T> {
     shared: bool,
 }
 
+#[derive(Clone, Copy, Default, Hash, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct MpcCurve2<T> {
+    val: T,
+    shared: bool,
+}
+
 macro_rules! impl_basics {
     ($ty:ident) => {
         impl<F: std::fmt::Display> std::fmt::Display for $ty<F> {
@@ -413,6 +419,23 @@ macro_rules! impl_basics {
 
 impl_basics!(MpcVal);
 impl_basics!(MpcCurve);
+impl_basics!(MpcCurve2);
+
+macro_rules! wrap_conv {
+    ($f:ident, $t:ident) => {
+        impl<T> std::convert::From<$f<T>> for $t<T> {
+            fn from(f: $f<T>) -> Self {
+                Self {
+                    val: f.val,
+                    shared: f.shared,
+                }
+            }
+        }
+    }
+}
+
+wrap_conv!(MpcCurve, MpcCurve2);
+wrap_conv!(MpcCurve2, MpcCurve);
 
 // macro_rules! add_op {
 //    ($T:ty,$L:ty,$R:ty,$O:ty,$f:ident) => {
@@ -450,6 +473,12 @@ impl<F: Field> MulAssign<MpcVal<F>> for MpcVal<F> {
 impl<G: ProjectiveCurve> MulAssign<MpcVal<G::ScalarField>> for MpcCurve<G> {
     fn mul_assign(&mut self, other: MpcVal<G::ScalarField>) {
         *self = channel::curve_mul(*self, other);
+    }
+}
+
+impl<G: ProjectiveCurve> MulAssign<MpcVal<G::ScalarField>> for MpcCurve2<G> {
+    fn mul_assign(&mut self, other: MpcVal<G::ScalarField>) {
+        *self = channel::curve_mul((*self).into(), other.into()).into();
     }
 }
 
@@ -714,15 +743,15 @@ shared_sqrt_field!(ark_bls12_377::Fq);
 // shared_sqrt_field!(ark_bls12_377::Fq2);
 
 macro_rules! curve_impl {
-    ($curve:path, $curve_proj:path, $base:path, $scalar:path, $cofactor:path) => {
+    ($curve:path, $curve_proj:path, $base:path, $scalar:path, $cofactor:path, $curve_wrapper:ident) => {
 
-        impl AffineCurve for MpcVal<$curve> {
+        impl AffineCurve for $curve_wrapper<$curve> {
             type ScalarField = MpcVal<$scalar>;
             const COFACTOR: &'static [u64] = $cofactor;
             type BaseField = MpcVal<$base>;
-            type Projective = MpcCurve<$curve_proj>;
+            type Projective = $curve_wrapper<$curve_proj>;
             fn prime_subgroup_generator() -> Self {
-                MpcVal::from_public(<$curve as AffineCurve>::prime_subgroup_generator())
+                Self::from_public(<$curve as AffineCurve>::prime_subgroup_generator())
             }
             fn from_random_bytes(_: &[u8]) -> Option<Self> {
                 todo!("AffineCurve::from_random_bytes")
@@ -740,21 +769,21 @@ macro_rules! curve_impl {
                 todo!("AffineCurve::mul_by_cofactor_inv")
             }
         }
-        impl From<MpcCurve<$curve_proj>> for MpcVal<$curve> {
-            fn from(p: MpcCurve<$curve_proj>) -> Self {
+        impl From<$curve_wrapper<$curve_proj>> for $curve_wrapper<$curve> {
+            fn from(p: $curve_wrapper<$curve_proj>) -> Self {
                 Self::new(p.val.into(), p.shared)
             }
         }
-        impl From<MpcVal<$curve>> for MpcCurve<$curve_proj> {
-            fn from(p: MpcVal<$curve>) -> Self {
+        impl From<$curve_wrapper<$curve>> for $curve_wrapper<$curve_proj> {
+            fn from(p: $curve_wrapper<$curve>) -> Self {
                 Self::new(p.val.into(), p.shared)
             }
         }
-        impl ProjectiveCurve for MpcCurve<$curve_proj> {
+        impl ProjectiveCurve for $curve_wrapper<$curve_proj> {
             const COFACTOR: &'static [u64] = $cofactor;
             type ScalarField = MpcVal<$scalar>;
             type BaseField = MpcVal<$base>;
-            type Affine = MpcVal<$curve>;
+            type Affine = $curve_wrapper<$curve>;
             fn prime_subgroup_generator() -> Self {
                 Self::from_public(<$curve_proj as ProjectiveCurve>::prime_subgroup_generator())
             }
@@ -772,7 +801,7 @@ macro_rules! curve_impl {
                 todo!()
             }
         }
-        impl MpcWire for MpcCurve<$curve_proj> {
+        impl MpcWire for $curve_wrapper<$curve_proj> {
             fn publicize(self) -> Self {
                 self.publicize()
             }
@@ -799,9 +828,9 @@ macro_rules! curve_impl {
 //     }
 // }
 
-curve_impl!(ark_bls12_377::G1Affine, ark_bls12_377::G1Projective, ark_bls12_377::Fq, ark_bls12_377::Fr, ark_bls12_377::G1Affine::COFACTOR);
+curve_impl!(ark_bls12_377::G1Affine, ark_bls12_377::G1Projective, ark_bls12_377::Fq, ark_bls12_377::Fr, ark_bls12_377::G1Affine::COFACTOR, MpcCurve);
+curve_impl!(ark_bls12_377::G2Affine, ark_bls12_377::G2Projective, ark_bls12_377::Fq, ark_bls12_377::Fr, ark_bls12_377::G2Affine::COFACTOR, MpcCurve2);
 //group_impl!(ark_bls12_377::G1Projective, ark_bls12_377::Fr);
-//curve_impl!(ark_bls12_377::G2Affine, ark_bls12_377::G2Projective, ark_bls12_377::Fq, ark_bls12_377::Fr, ark_bls12_377::G1Affine::COFACTOR);
 
 //    type ScalarField: PrimeField + SquareRootField + Into<<Self::ScalarField
 // as PrimeField>::BigInt>;    type BaseField: Field;
@@ -833,11 +862,11 @@ curve_impl!(ark_bls12_377::G1Affine, ark_bls12_377::G1Projective, ark_bls12_377:
 // impl PairingEngine for MpcPairingEngine<Bls12_377> {
 //     type Fr = MpcVal<<Bls12_377 as PairingEngine>::Fr>;
 //     type G1Projective = MpcCurve<<Bls12_377 as PairingEngine>::G1Projective>;
-//     type G1Affine = MpcVal<<Bls12_377 as PairingEngine>::G1Affine>;
-//     type G1Prepared = MpcVal<<Bls12_377 as PairingEngine>::G1Prepared>;
-//     type G2Projective = MpcCurve<<Bls12_377 as PairingEngine>::G2Projective>;
-//     type G2Affine = MpcVal<<Bls12_377 as PairingEngine>::G2Affine>;
-//     type G2Prepared = MpcVal<<Bls12_377 as PairingEngine>::G2Prepared>;
+//     type G1Affine = MpcCurve<<Bls12_377 as PairingEngine>::G1Affine>;
+//     type G1Prepared = MpcCurve<<Bls12_377 as PairingEngine>::G1Prepared>;
+//     type G2Projective = MpcCurve2<<Bls12_377 as PairingEngine>::G2Projective>;
+//     type G2Affine = MpcCurve2<<Bls12_377 as PairingEngine>::G2Affine>;
+//     type G2Prepared = MpcCurve2<<Bls12_377 as PairingEngine>::G2Prepared>;
 //     type Fq = MpcVal<<Bls12_377 as PairingEngine>::Fq>;
 //     type Fqe = MpcVal<<Bls12_377 as PairingEngine>::Fqe>;
 //     type Fqk = MpcVal<<Bls12_377 as PairingEngine>::Fqk>;
