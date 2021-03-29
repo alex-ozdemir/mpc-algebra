@@ -1,5 +1,5 @@
 use ark_bls12_377::Bls12_377;
-use ark_ec::{group::Group, AffineCurve, PairingEngine, ProjectiveCurve};
+use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::{FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
 use ark_serialize::*;
 use ark_std::UniformRand;

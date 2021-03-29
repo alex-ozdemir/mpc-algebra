@@ -4,9 +4,7 @@ mod mpc;
 
 use ark_bls12_377::Fr;
 use ark_ec::group::Group;
-use ark_ec::AffineCurve;
 use ark_ec::ProjectiveCurve;
-use ark_ff::Zero;
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
 use ark_serialize::CanonicalSerialize;
@@ -86,7 +84,7 @@ impl Computation {
     }
     fn run_gp<G: ProjectiveCurve + mpc::MpcWire>(
         &self,
-        mut inputs: Vec<<G as Group>::ScalarField>,
+        inputs: Vec<<G as Group>::ScalarField>,
     ) -> Vec<G> {
         println!("Inputs:");
         for (i, v) in inputs.iter().enumerate() {

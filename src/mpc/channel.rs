@@ -199,6 +199,7 @@ impl FieldChannel {
         }
     }
 
+    #[allow(dead_code)]
     fn field_sub<F: Field>(&mut self, mut a: MpcVal<F>, b: &MpcVal<F>) -> MpcVal<F> {
         match (a.shared, b.shared) {
             (true, true) | (false, false) => {
@@ -289,6 +290,7 @@ impl FieldChannel {
         }
     }
 
+    #[allow(dead_code)]
     fn curve_sub<F: ProjectiveCurve>(&mut self, mut a: MpcCurve<F>, b: &MpcCurve<F>) -> MpcCurve<F> {
         match (a.shared, b.shared) {
             (true, true) | (false, false) => {
@@ -355,6 +357,7 @@ pub fn am_first() -> bool {
 pub type Triple<F, G, H> = (MpcVal<F>, MpcVal<G>, MpcVal<H>);
 
 /// Get a field triple
+#[allow(dead_code)]
 pub fn field_triple<F: Field>() -> Triple<F, F, F> {
     get_ch!().field_triple()
 }
