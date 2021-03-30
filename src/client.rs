@@ -4,8 +4,8 @@ mod mpc;
 
 use ark_bls12_377::Fr;
 use ark_ec::group::Group;
-use ark_ec::ProjectiveCurve;
 use ark_ec::PairingEngine;
+use ark_ec::ProjectiveCurve;
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
 use ark_serialize::CanonicalSerialize;
@@ -34,6 +34,8 @@ arg_enum! {
         Fri,
         Dh,
         PairingDh,
+        PairingProd,
+        PairingDiv,
     }
 }
 
@@ -88,10 +90,17 @@ struct Opt {
 impl Opt {
     fn domain(&self) -> ComputationDomain {
         match &self.computation {
-            Computation::Dh => if self.use_g2 { ComputationDomain::G2 }  else {
-                ComputationDomain::G1},
+            Computation::Dh => {
+                if self.use_g2 {
+                    ComputationDomain::G2
+                } else {
+                    ComputationDomain::G1
+                }
+            }
 
-            Computation::PairingDh => ComputationDomain::Pairing,
+            Computation::PairingDh | Computation::PairingProd | Computation::PairingDiv => {
+                ComputationDomain::Pairing
+            }
             _ => ComputationDomain::Field,
         }
     }
@@ -102,8 +111,9 @@ impl Computation {
         &self,
         inputs: Vec<<P as PairingEngine>::Fr>,
     ) -> Vec<<P as PairingEngine>::Fr>
-        where <P as PairingEngine>::Fr: mpc::MpcWire
-            , <P as PairingEngine>::Fqk: mpc::MpcWire
+    where
+        <P as PairingEngine>::Fr: mpc::MpcWire,
+        <P as PairingEngine>::Fqk: mpc::MpcWire,
     {
         let outputs = match self {
             Computation::PairingDh => {
@@ -119,6 +129,68 @@ impl Computation {
                 let gc = P::pairing(g1c, g2).publicize();
                 let gcc = P::pairing(g1a, g2b).publicize();
                 assert_eq!(gc, gcc);
+                vec![]
+            }
+            Computation::PairingProd => {
+                // ((a + b) * g1, (c + d) * g2) = (a * g1, c * g2)
+                //                              * (b * g1, c * g2)
+                //                              * (a * g1, d * g2)
+                //                              * (b * g1, d * g2)
+                assert_eq!(4, inputs.len());
+                let a = inputs[0];
+                let b = inputs[1];
+                let c = inputs[2];
+                let d = inputs[3];
+                let ab = a + b;
+                let cd = c + d;
+                let g1 = <P as PairingEngine>::G1Projective::prime_subgroup_generator();
+                let g2 = <P as PairingEngine>::G2Projective::prime_subgroup_generator();
+                let g1ab = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &ab);
+                let g2cd = <<P as PairingEngine>::G2Projective as Group>::mul(&g2, &cd);
+                let g1a = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &a);
+                let g1b = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &b);
+                let g2c = <<P as PairingEngine>::G2Projective as Group>::mul(&g2, &c);
+                let g2d = <<P as PairingEngine>::G2Projective as Group>::mul(&g2, &d);
+                let gtabcd = P::pairing(g1ab, g2cd);
+                let gtac = P::pairing(g1a, g2c);
+                let gtbc = P::pairing(g1b, g2c);
+                let gtad = P::pairing(g1a, g2d);
+                let gtbd = P::pairing(g1b, g2d);
+                let gtabcd2 = gtac * gtbc * gtad * gtbd;
+                let gtabcdp = gtabcd.publicize();
+                let gtabcd2p = gtabcd2.publicize();
+                assert_eq!(gtabcdp, gtabcd2p);
+                vec![]
+            }
+            Computation::PairingDiv => {
+                // ((a - b) * g1, (c - d) * g2) = (a * g1, c * g2)
+                //                              / (b * g1, c * g2)
+                //                              / (a * g1, d * g2)
+                //                              * (b * g1, d * g2)
+                assert_eq!(4, inputs.len());
+                let a = inputs[0];
+                let b = inputs[1];
+                let c = inputs[2];
+                let d = inputs[3];
+                let ab = a - b;
+                let cd = c - d;
+                let g1 = <P as PairingEngine>::G1Projective::prime_subgroup_generator();
+                let g2 = <P as PairingEngine>::G2Projective::prime_subgroup_generator();
+                let g1ab = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &ab);
+                let g2cd = <<P as PairingEngine>::G2Projective as Group>::mul(&g2, &cd);
+                let g1a = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &a);
+                let g1b = <<P as PairingEngine>::G1Projective as Group>::mul(&g1, &b);
+                let g2c = <<P as PairingEngine>::G2Projective as Group>::mul(&g2, &c);
+                let g2d = <<P as PairingEngine>::G2Projective as Group>::mul(&g2, &d);
+                let gtabcd = P::pairing(g1ab, g2cd);
+                let gtac = P::pairing(g1a, g2c);
+                let gtbc = P::pairing(g1b, g2c);
+                let gtad = P::pairing(g1a, g2d);
+                let gtbd = P::pairing(g1b, g2d);
+                let gtabcd2 = gtac / gtbc / gtad * gtbd;
+                let gtabcdp = gtabcd.publicize();
+                let gtabcd2p = gtabcd2.publicize();
+                assert_eq!(gtabcdp, gtabcd2p);
                 vec![]
             }
             c => unimplemented!("Cannot run_pairing {:?}", c),
@@ -343,15 +415,15 @@ fn main() -> () {
         .unwrap();
     channel::init(self_addr, peer_addr, opt.party == 0);
     debug!("Start");
-        let inputs = opt
-            .args
-            .iter()
-            .map(|i| MFr::from_shared(Fr::from(*i)))
-            .collect::<Vec<MFr>>();
-        println!("Inputs:");
-        for (i, v) in inputs.iter().enumerate() {
-            println!("  {}: {}", i, v);
-        }
+    let inputs = opt
+        .args
+        .iter()
+        .map(|i| MFr::from_shared(Fr::from(*i)))
+        .collect::<Vec<MFr>>();
+    println!("Inputs:");
+    for (i, v) in inputs.iter().enumerate() {
+        println!("  {}: {}", i, v);
+    }
     match domain {
         ComputationDomain::Field => {
             let outputs = opt.computation.run_field(inputs);
@@ -365,9 +437,7 @@ fn main() -> () {
             }
         }
         ComputationDomain::G1 => {
-            let outputs = opt
-                .computation
-                .run_gp::<MG1>(inputs);
+            let outputs = opt.computation.run_gp::<MG1>(inputs);
             let public_outputs = outputs
                 .into_iter()
                 .map(|c: MG1| c.publicize())
@@ -378,9 +448,7 @@ fn main() -> () {
             }
         }
         ComputationDomain::G2 => {
-            let outputs = opt
-                .computation
-                .run_gp::<MG2>(inputs);
+            let outputs = opt.computation.run_gp::<MG2>(inputs);
             let public_outputs = outputs
                 .into_iter()
                 .map(|c: MG2| c.publicize())

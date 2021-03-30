@@ -474,167 +474,77 @@ macro_rules! impl_mult_basics {
 
         impl<F: AddAssign<F>> AddAssign<$ty<F>> for $ty<F> {
             fn add_assign(&mut self, other: $ty<F>) {
-                match (self.shared, other.shared) {
-                    (true, false) => {
-                        if channel::am_first() {
-                            self.val.add_assign(other.val);
-                        } else {
-                        }
-                    }
-                    (false, true) => {
-                        if channel::am_first() {
-                            self.val.add_assign(other.val);
-                        } else {
-                            self.val = other.val;
-                        }
-                    }
-                    _ => {
-                        self.val.add_assign(other.val);
-                    }
-                }
-                self.shared = self.shared || other.shared;
+                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
+                self.val.add_assign(other.val);
             }
         }
 
         impl<F: Add<F, Output = F>> Add<$ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn add(self, other: $ty<F>) -> Self::Output {
-                Self::new(
-                    if self.shared == other.shared || channel::am_first() {
-                        self.val.add(other.val)
-                    } else if other.shared {
-                        other.val
-                    } else {
-                        self.val
-                    },
-                    self.shared || other.shared,
+                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
+                Self::from_public(
+                    self.val.add(other.val),
                 )
             }
         }
 
         impl<'a, F: AddAssign<&'a F> + Clone> AddAssign<&'a $ty<F>> for $ty<F> {
             fn add_assign(&mut self, other: &'a $ty<F>) {
-                match (self.shared, other.shared) {
-                    (true, false) => {
-                        if channel::am_first() {
-                            self.val.add_assign(&other.val);
-                        } else {
-                        }
-                    }
-                    (false, true) => {
-                        if channel::am_first() {
-                            self.val.add_assign(&other.val);
-                        } else {
-                            self.val = other.val.clone();
-                        }
-                    }
-                    _ => {
-                        self.val.add_assign(&other.val);
-                    }
-                }
-                self.shared = self.shared || other.shared;
+                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
+                self.val.add_assign(&other.val);
             }
         }
 
         impl<'a, F: Add<&'a F, Output = F> + Clone> Add<&'a $ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn add(self, other: &'a $ty<F>) -> Self::Output {
-                Self::new(
-                    if self.shared == other.shared || channel::am_first() {
-                        self.val.add(&other.val)
-                    } else if other.shared {
-                        other.val.clone()
-                    } else {
-                        self.val
-                    },
-                    self.shared || other.shared,
+                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
+                Self::from_public(
+                    self.val.add(&other.val),
                 )
             }
         }
 
         impl<F: SubAssign<F> + Neg<Output = F>> SubAssign<$ty<F>> for $ty<F> {
             fn sub_assign(&mut self, other: $ty<F>) {
-                match (self.shared, other.shared) {
-                    (true, false) => {
-                        if channel::am_first() {
-                            self.val.sub_assign(other.val);
-                        } else {
-                        }
-                    }
-                    (false, true) => {
-                        if channel::am_first() {
-                            self.val.sub_assign(other.val);
-                        } else {
-                            self.val = -other.val;
-                        }
-                    }
-                    _ => {
-                        self.val.sub_assign(other.val);
-                    }
-                }
-                self.shared = self.shared || other.shared;
+                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
+                self.val.sub_assign(other.val);
             }
         }
 
         impl<F: Sub<F, Output = F> + Neg<Output = F>> Sub<$ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn sub(self, other: $ty<F>) -> Self::Output {
-                Self::new(
-                    if self.shared == other.shared || channel::am_first() {
-                        self.val.sub(other.val)
-                    } else if other.shared {
-                        -other.val
-                    } else {
-                        self.val
-                    },
-                    self.shared || other.shared,
+                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
+                Self::from_public(
+                    self.val.sub(other.val),
                 )
             }
         }
 
         impl<'a, F: SubAssign<&'a F> + Clone + Neg<Output = F>> SubAssign<&'a $ty<F>> for $ty<F> {
             fn sub_assign(&mut self, other: &'a $ty<F>) {
-                match (self.shared, other.shared) {
-                    (true, false) => {
-                        if channel::am_first() {
-                            self.val.sub_assign(&other.val);
-                        } else {
-                        }
-                    }
-                    (false, true) => {
-                        if channel::am_first() {
-                            self.val.sub_assign(&other.val);
-                        } else {
-                            self.val = -other.val.clone();
-                        }
-                    }
-                    _ => {
-                        self.val.sub_assign(&other.val);
-                    }
-                }
-                self.shared = self.shared || other.shared;
+                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
+                self.val.sub_assign(&other.val);
             }
         }
 
         impl<'a, F: Sub<&'a F, Output = F> + Clone + Neg<Output = F>> Sub<&'a $ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn sub(self, other: &'a $ty<F>) -> Self::Output {
-                Self::new(
-                    if self.shared == other.shared || channel::am_first() {
-                        self.val.sub(&other.val)
-                    } else if other.shared {
-                        -other.val.clone()
-                    } else {
-                        self.val
-                    },
-                    self.shared || other.shared,
+                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
+                Self::from_public(
+                    self.val.sub(&other.val),
                 )
             }
         }
         impl<F: Neg<Output = F>> Neg for $ty<F> {
             type Output = $ty<F>;
             fn neg(mut self) -> Self::Output {
-                self.val = self.val.neg();
+                if self.shared && channel::am_first() {
+                    self.val = self.val.neg();
+                }
                 self
             }
         }
@@ -1269,8 +1179,176 @@ macro_rules! wrap_mul {
     }
 }
 
+macro_rules! wrap_lin_mul {
+    ($wrap:ident) => {
+
+        impl<F: Field> MulAssign<$wrap<F>> for $wrap<F> {
+            fn mul_assign(&mut self, other: $wrap<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.mul_assign(other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.mul_assign(other.val);
+                        } else {
+                            self.val = other.val;
+                        }
+                    }
+                    _ => {
+                        self.val.mul_assign(other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+
+
+        impl<F: Field> Mul<$wrap<F>> for $wrap<F> {
+            type Output = $wrap<F>;
+            fn mul(self, other: $wrap<F>) -> Self::Output {
+                Self::new(
+                    if self.shared == other.shared || channel::am_first() {
+                        self.val.mul(other.val)
+                    } else if other.shared {
+                        other.val
+                    } else {
+                        self.val
+                    },
+                    self.shared || other.shared,
+                )
+            }
+        }
+
+        impl<'a, F: Field> MulAssign<&'a $wrap<F>> for $wrap<F> {
+            fn mul_assign(&mut self, other: &'a $wrap<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.mul_assign(&other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.mul_assign(&other.val);
+                        } else {
+                            self.val = other.val;
+                        }
+                    }
+                    _ => {
+                        self.val.mul_assign(&other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+        impl<'a, F: Field> Mul<&'a $wrap<F>> for $wrap<F> {
+            type Output = $wrap<F>;
+            fn mul(self, other: &'a $wrap<F>) -> Self::Output {
+                Self::new(
+                    if self.shared == other.shared || channel::am_first() {
+                        self.val.mul(&other.val)
+                    } else if other.shared {
+                        other.val
+                    } else {
+                        self.val
+                    },
+                    self.shared || other.shared,
+                )
+            }
+        }
+        impl<F: Field> DivAssign<$wrap<F>> for $wrap<F> {
+            fn div_assign(&mut self, other: $wrap<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.div_assign(other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.div_assign(other.val);
+                        } else {
+                            self.val = other.val.inverse().unwrap();
+                        }
+                    }
+                    _ => {
+                        self.val.div_assign(other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+        impl<F: Field> Div<$wrap<F>> for $wrap<F> {
+            type Output = $wrap<F>;
+            fn div(mut self, other: $wrap<F>) -> Self::Output {
+                self.div_assign(other);
+                self
+            }
+        }
+        impl<'a, F: Field> DivAssign<&'a $wrap<F>> for $wrap<F> {
+            fn div_assign(&mut self, other: &'a $wrap<F>) {
+                match (self.shared, other.shared) {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.div_assign(other.val);
+                        } else {
+                        }
+                    }
+                    (false, true) => {
+                        if channel::am_first() {
+                            self.val.div_assign(other.val);
+                        } else {
+                            self.val = other.val.inverse().unwrap();
+                        }
+                    }
+                    _ => {
+                        self.val.div_assign(other.val);
+                    }
+                }
+                self.shared = self.shared || other.shared;
+            }
+        }
+        impl<'a, F: Field> Div<&'a $wrap<F>> for $wrap<F> {
+            type Output = $wrap<F>;
+            fn div(mut self, other: &'a $wrap<F>) -> Self::Output {
+                self.div_assign(other);
+                self
+            }
+        }
+
+        impl<F: Field> ark_ff::One for $wrap<F> {
+            fn one() -> Self {
+                Self::from_public(F::one())
+            }
+        }
+
+        impl<F: Field> ark_std::iter::Product<$wrap<F>> for $wrap<F> {
+            fn product<I>(i: I) -> Self
+            where
+                I: Iterator<Item = $wrap<F>>,
+            {
+                i.fold($wrap::one(), Mul::mul)
+            }
+        }
+        impl<'a, F: 'a + Field> ark_std::iter::Product<&'a $wrap<F>> for $wrap<F> {
+            fn product<I>(i: I) -> Self
+            where
+                I: Iterator<Item = &'a $wrap<F>>,
+            {
+                i.fold($wrap::one(), Mul::mul)
+            }
+        }
+    }
+}
+
 wrap_mul!(MpcVal);
-wrap_mul!(MpcMulVal);
+wrap_lin_mul!(MpcMulVal);
 
 impl<G: ProjectiveCurve> MulAssign<MpcVal<G::ScalarField>> for MpcCurve<G> {
     fn mul_assign(&mut self, other: MpcVal<G::ScalarField>) {
