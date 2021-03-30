@@ -59,3 +59,9 @@ $BIN --port 8001 --peer-host localhost --peer-port 8000 -d pairingdiv 0 1 6 1 --
 $BIN --port 8000 --peer-host localhost --peer-port 8001 -d pairingdiv 2 2 0 1 --party 1 & ; pid1=$1
 
 wait $pid0 $pid1
+
+# groth16
+$BIN --port 8001 --peer-host localhost --peer-port 8000 -d groth16 --party 0 & ; pid0=$1
+$BIN --port 8000 --peer-host localhost --peer-port 8001 -d groth16 --party 1 & ; pid1=$1
+
+wait $pid0 $pid1

@@ -36,6 +36,7 @@ arg_enum! {
         PairingDh,
         PairingProd,
         PairingDiv,
+        Groth16,
     }
 }
 
@@ -44,6 +45,7 @@ enum ComputationDomain {
     G2,
     Field,
     Pairing,
+    BlsPairing,
 }
 
 #[derive(Debug, StructOpt)]
@@ -101,12 +103,28 @@ impl Opt {
             Computation::PairingDh | Computation::PairingProd | Computation::PairingDiv => {
                 ComputationDomain::Pairing
             }
+            Computation::Groth16 => ComputationDomain::BlsPairing,
             _ => ComputationDomain::Field,
         }
     }
 }
 
 impl Computation {
+    fn run_bls(&self, inputs: Vec<MFr>) -> Vec<MFr> {
+        let outputs = match self {
+            Computation::Groth16 => {
+                mpc::groth::mpc_test_prove_and_verify(1);
+                vec![]
+            }
+            c => unimplemented!("Cannot run_pairing {:?}", c),
+        };
+        println!("Outputs:");
+        for (i, v) in outputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+        outputs
+
+    }
     fn run_pairing<P: PairingEngine>(
         &self,
         inputs: Vec<<P as PairingEngine>::Fr>,
@@ -298,7 +316,7 @@ impl Computation {
                     let mut challenge_bytes = [0u8; 32];
                     t.challenge_bytes(b"challenge", &mut challenge_bytes);
                     let mut rng = rand::rngs::StdRng::from_seed(challenge_bytes);
-                    let alpha = F::rand(&mut rng);
+                    let alpha = F::public_rand(&mut rng);
                     println!("Fri commit round {}, challenge: {}", i, alpha);
                     let mut f_next = Vec::new();
                     for i in 0..f_last.len() / 2 {
@@ -462,6 +480,17 @@ fn main() -> () {
             let outputs = opt
                 .computation
                 .run_pairing::<mpc::MpcPairingEngine<ark_bls12_377::Bls12_377>>(inputs);
+            let public_outputs = outputs
+                .into_iter()
+                .map(|c: MFr| c.publicize())
+                .collect::<Vec<_>>();
+            println!("Public Outputs:");
+            for (i, v) in public_outputs.iter().enumerate() {
+                println!("  {}: {}", i, v);
+            }
+        }
+        ComputationDomain::BlsPairing => {
+            let outputs = opt.computation.run_bls(inputs);
             let public_outputs = outputs
                 .into_iter()
                 .map(|c: MFr| c.publicize())

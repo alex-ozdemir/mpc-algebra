@@ -10,6 +10,7 @@ use std::borrow::Cow;
 use std::ops::*;
 
 pub mod channel;
+pub mod groth;
 
 // const N_PARTIES: u32 = 2;
 
@@ -336,6 +337,7 @@ macro_rules! impl_basics {
                     + ark_serialize::CanonicalDeserialize
                     + Clone,
             > MpcWire for $ty<F> {
+                type Base = F;
             fn publicize(self) -> Self {
                 if self.shared {
                     let mut other_val = channel::exchange(self.val.clone());
@@ -344,6 +346,12 @@ macro_rules! impl_basics {
                 } else {
                     self
                 }
+            }
+            fn publicize_unwrap(self) -> Self::Base {
+                self.publicize().val
+            }
+            fn cast_to_shared(self) -> Self {
+                Self::from_shared(self.val)
             }
             fn publicize_cow<'b>(&'b self) -> Cow<'b, Self> {
                 if self.shared {
@@ -370,8 +378,7 @@ macro_rules! impl_basics {
             {
                 $ty {
                     val: F::rand(r),
-                    // TODO: Good for FRI, bad in general?
-                    shared: false,
+                    shared: true,
                 }
             }
         }
@@ -906,6 +913,7 @@ macro_rules! impl_mult_basics {
                     + ark_serialize::CanonicalDeserialize
                     + Clone,
             > MpcWire for $ty<F> {
+                type Base = F;
             fn publicize(self) -> Self {
                 if self.shared {
                     let mut other_val = channel::exchange(self.val.clone());
@@ -914,6 +922,12 @@ macro_rules! impl_mult_basics {
                 } else {
                     self
                 }
+            }
+            fn publicize_unwrap(self) -> Self::Base {
+                self.publicize().val
+            }
+            fn cast_to_shared(self) -> Self {
+                Self::from_shared(self.val)
             }
             fn publicize_cow<'b>(&'b self) -> Cow<'b, Self> {
                 if self.shared {
@@ -1622,9 +1636,12 @@ macro_rules! curve_impl {
             }
             fn mul<S: Into<<Self::ScalarField as PrimeField>::BigInt>>(
                 &self,
-                _: S,
+                s: S,
             ) -> <Self as AffineCurve>::Projective {
-                todo!("AffineCurve::mul")
+                //TODO: fix
+                let s = s.into();
+                debug!("{} * {}", s, self);
+                $curve_wrapper::from_shared(self.val.mul(s))
             }
             fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
                 todo!("AffineCurve::mul_by_cofactor_to_projective")
@@ -1652,17 +1669,30 @@ macro_rules! curve_impl {
                 Self::from_public(<$curve_proj as ProjectiveCurve>::prime_subgroup_generator())
             }
             fn batch_normalization(_: &mut [Self]) {
-                todo!()
+                todo!("ProjectiveCurve::batch_normalization")
             }
             fn is_normalized(&self) -> bool {
-                todo!()
+                todo!("ProjectiveCurve::is_normalized")
             }
             fn double_in_place(&mut self) -> &mut Self {
                 <$curve_proj as ProjectiveCurve>::double_in_place(&mut self.val);
                 self
             }
-            fn add_assign_mixed(&mut self, _: &<Self as ProjectiveCurve>::Affine) {
-                todo!()
+            fn add_assign_mixed(&mut self, o: &<Self as ProjectiveCurve>::Affine) {
+                debug!("ProjectiveCurve::add_assign_mixed({}, {})", self.shared, o.shared);
+                match (self.shared, o.shared) {
+                    (true, true) | (false, false) => {
+                        self.val.add_assign_mixed(&o.val);
+                    }
+                    (true, false) => if channel::am_first() {
+                        self.val.add_assign_mixed(&o.val);
+                    } else {
+                    }
+                    (false, true) => {
+                        self.val = o.val.into();
+                    }
+                }
+                self.shared = self.shared || o.shared;
             }
         }
     }
@@ -1787,7 +1817,10 @@ impl PairingEngine for MpcPairingEngine<Bls12_377> {
 
 /// Vector-Commitable Field
 pub trait MpcWire: Clone {
+    type Base: Clone;
     fn publicize(self) -> Self;
+    fn cast_to_shared(self) -> Self;
+    fn publicize_unwrap(self) -> Self::Base;
     fn publicize_cow<'b>(&'b self) -> Cow<'b, Self>;
 }
 
@@ -1796,6 +1829,7 @@ pub trait ComField: FftField + MpcWire {
     type Commitment: ark_serialize::CanonicalSerialize;
     type Key;
     type OpeningProof: ark_serialize::CanonicalSerialize;
+    fn public_rand<R: Rng>(r: &mut R) -> Self;
     fn commit(vs: &[Self]) -> (Self::Key, Self::Commitment);
     fn open_at(vs: &[Self], key: &Self::Key, i: usize) -> (Self, Self::OpeningProof);
     fn check_opening(c: &Self::Commitment, p: Self::OpeningProof, i: usize, v: Self) -> bool;
@@ -1809,6 +1843,12 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
         <Bls12_377 as PairingEngine>::Fr,
         Vec<(Vec<u8>, Vec<u8>)>,
     );
+    fn public_rand<R: Rng>(r: &mut R) -> Self {
+        Self {
+            val: <Bls12_377 as PairingEngine>::Fr::rand(r),
+            shared: false,
+        }
+    }
     fn commit(vs: &[Self]) -> (Self::Key, Self::Commitment) {
         let mut tree = Vec::new();
         let mut hashes: Vec<Vec<u8>> = vs

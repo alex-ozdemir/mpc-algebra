@@ -97,6 +97,7 @@ impl FieldChannel {
         s.write_all(&bytes[..]).unwrap();
         s.write_all(v).unwrap();
         self.bytes_sent += bytes.len() + v.len();
+        debug!("Recv: {}", bytes.len() + v.len());
     }
 
     fn recv_vec(&mut self) -> Vec<u8> {
@@ -106,6 +107,7 @@ impl FieldChannel {
         let mut bytes = vec![0u8; u64::from_ne_bytes(len) as usize];
         s.read_exact(&mut bytes[..]).unwrap();
         self.bytes_recv += bytes.len() + len.len();
+        debug!("Sent: {}", bytes.len() + len.len());
         bytes
     }
 
