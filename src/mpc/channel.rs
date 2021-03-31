@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use super::{MpcMulVal, MpcVal};
 use ark_ec::{PairingEngine, ProjectiveCurve};
-use ark_ff::Field;
+use ark_ff::{Field, PrimeField};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 
 lazy_static! {

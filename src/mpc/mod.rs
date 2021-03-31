@@ -1,6 +1,6 @@
 use ark_bls12_377::Bls12_377;
 use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::{FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
+use ark_ff::{FftParameters, FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
 use ark_serialize::*;
 use ark_std::UniformRand;
 use log::debug;
@@ -1559,10 +1559,12 @@ macro_rules! shared_prime_field {
             type Params = <$Pf as PrimeField>::Params;
             // type BigInt = MpcVal<F::BigInt>;
             type BigInt = <$Pf as PrimeField>::BigInt;
+            // We're assuming that from_repr is linear
             fn from_repr(r: <Self as PrimeField>::BigInt) -> Option<Self> {
                 // F::from_repr(r.val).map(|v| MpcVal::new(v, r.shared))
                 <$Pf>::from_repr(r).map(|v| MpcVal::from_public(v))
             }
+            // We're assuming that into_repr is linear
             fn into_repr(&self) -> <Self as PrimeField>::BigInt {
                 // MpcVal::new(self.val.into_repr(), self.shared)
                 self.val.into_repr()
@@ -1639,6 +1641,7 @@ macro_rules! curve_impl {
                 s: S,
             ) -> <Self as AffineCurve>::Projective {
                 //TODO: fix
+                assert!(!self.shared);
                 let s = s.into();
                 debug!("{} * {}", s, self);
                 $curve_wrapper::from_shared(self.val.mul(s))
@@ -1693,6 +1696,17 @@ macro_rules! curve_impl {
                     }
                 }
                 self.shared = self.shared || o.shared;
+            }
+            fn mul<S: AsRef<[u64]>>(self, scalar_words: S) -> Self {
+                if self.shared {
+                    // Cast s to bigint..
+                    let mut scalar = <Self::ScalarField as PrimeField>::BigInt::from(0u64);
+                    scalar.as_mut().copy_from_slice(scalar_words.as_ref());
+                    let scalar = Self::ScalarField::from_repr(scalar).unwrap();
+                    channel::curve_mul(self.into(), scalar.cast_to_shared()).into()
+                } else {
+                    $curve_wrapper::from_shared(self.val.mul(scalar_words))
+                }
             }
         }
     }

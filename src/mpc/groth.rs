@@ -101,12 +101,13 @@ pub fn mpc_test_prove_and_verify(n_iters: usize) {
         let mut c = a;
         c.mul_assign(&b);
 
-        let mpc_proof = prover::create_proof_no_zk::<_>(
+        let mpc_proof = prover::create_random_proof::<_, _>(
             MySillyCircuit {
                 a: Some(a),
                 b: Some(b),
             },
             &mpc_params,
+            rng
         )
         .unwrap();
         let proof = pf_publicize(mpc_proof);
