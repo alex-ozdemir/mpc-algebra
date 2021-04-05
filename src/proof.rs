@@ -84,8 +84,10 @@ fn test_squaring_mpc(n: usize) {
     let mpc_params = pk_to_mpc(params);
 
     let a = MpcVal::<ark_bls12_377::Fr>::rand(rng);
+    let computation_timer = start_timer!(|| "do the mpc");
     let circ_data = RepeatedSquaringCircuit::from_start(a, n);
     let public_inputs = vec![circ_data.chain.last().unwrap().unwrap().publicize_unwrap()];
+    end_timer!(computation_timer);
     let timer = start_timer!(|| "timed section");
     let mpc_proof =
         create_random_proof::<MpcPairingEngine<Bls12_377>, _, _>(circ_data, &mpc_params, rng)
