@@ -4,10 +4,11 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::Mutex;
 
-use super::{MpcMulVal, MpcVal};
+use super::MpcVal;
 use ark_ec::{PairingEngine, ProjectiveCurve};
-use ark_ff::{Field, PrimeField};
+use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+use ark_std::cfg_iter_mut;
 
 lazy_static! {
     static ref CH: Mutex<FieldChannel> = Mutex::new(FieldChannel::default());
@@ -155,6 +156,19 @@ impl FieldChannel {
         }
     }
 
+    fn field_triples<F: Field>(&self, n: usize) -> (Vec<MpcVal<F>>, Vec<MpcVal<F>>, Vec<MpcVal<F>>) {
+        let mut a = Vec::new();
+        let mut b = Vec::new();
+        let mut c = Vec::new();
+        for _ in 0..n {
+            let (x, y, z) = self.field_triple();
+            a.push(x);
+            b.push(y);
+            c.push(z);
+        }
+        (a, b, c)
+    }
+
     fn field_mul<F: Field>(&mut self, mut a: MpcVal<F>, b: MpcVal<F>) -> MpcVal<F> {
         if a.shared && b.shared {
             // x * y = z
@@ -175,6 +189,42 @@ impl FieldChannel {
         } else {
             a.val *= b.val;
             a.shared = a.shared || b.shared;
+            a
+        }
+    }
+    fn field_batch_mul<F: Field>(&mut self, mut a: Vec<MpcVal<F>>, mut b: Vec<MpcVal<F>>) -> Vec<MpcVal<F>> {
+        //TODO: consider parallel iteration
+        let a_shared = a[0].shared;
+        assert!(a.iter().all(|a| a.shared == a_shared));
+        let b_shared = b[0].shared;
+        assert!(b.iter().all(|a| a.shared == b_shared));
+        if a_shared && b_shared {
+            // x * y = z
+            let (xs, ys, mut zs) = self.field_triples(a.len());
+            // xa = x + a
+            for (a, x) in a.iter_mut().zip(xs.iter())  {
+                a.val += x.val;
+            }
+            let xas = self.field_batch_publicize(a);
+            // yb = y + b
+            for (b, y) in b.iter_mut().zip(ys.iter())  {
+                b.val += y.val;
+            }
+            let ybs = self.field_batch_publicize(b);
+            // xy - (x+a)y - x(y+b) + (x+a)(y+b) = ab
+            for i in 0..zs.len() {
+                zs[i].val -= ys[i].val * &xas[i].val;
+                zs[i].val -= xs[i].val * &ybs[i].val;
+                if self.talk_first {
+                    zs[i].val += xas[i].val * &ybs[i].val;
+                }
+            }
+            zs
+        } else {
+            for i in 0..a.len() {
+                a[i].val *= b[i].val;
+                a[i].shared = a[i].shared || b[i].shared;
+            }
             a
         }
     }
@@ -229,6 +279,21 @@ impl FieldChannel {
         let mut other_val = self.exchange(a.val.clone());
         other_val += a.val;
         MpcVal::from_public(other_val)
+    }
+
+    fn field_batch_publicize<F: Field>(&mut self, mut a: Vec<MpcVal<F>>) -> Vec<MpcVal<F>> {
+        assert!(a.iter().all(|a| a.shared));
+        let mut bytes_out = Vec::new();
+        for a in &a {
+            a.val.serialize(&mut bytes_out).unwrap();
+        }
+        let bytes_per_elem = bytes_out.len() / a.len();
+        let bytes_in = self.exchange_bytes(bytes_out);
+        for (i, a) in a.iter_mut().enumerate() {
+            a.shared = false;
+            a.val += F::deserialize(&bytes_in[i*bytes_per_elem..(i+1)*bytes_per_elem]).unwrap();
+        }
+        a
     }
 
     fn curve_scalar_triple<G: ProjectiveCurve>(&self) -> Triple<G, G::ScalarField, G> {
@@ -416,6 +481,11 @@ pub fn field_triple<F: Field>() -> Triple<F, F, F> {
 /// Copute a field product over SS data
 pub fn field_mul<F: Field>(a: MpcVal<F>, b: MpcVal<F>) -> MpcVal<F> {
     get_ch!().field_mul(a, b)
+}
+
+/// Copute a field product over SS data
+pub fn field_batch_mul<F: Field>(a: Vec<MpcVal<F>>, b: Vec<MpcVal<F>>) -> Vec<MpcVal<F>> {
+    get_ch!().field_batch_mul(a, b)
 }
 
 /// Copute a field-curve product over SS data

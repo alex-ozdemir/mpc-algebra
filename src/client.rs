@@ -113,11 +113,13 @@ impl Computation {
     fn run_bls(&self, inputs: Vec<MFr>) -> Vec<MFr> {
         let outputs = match self {
             Computation::Groth16 => {
-                mpc::groth::mpc_test_prove_and_verify(10);
+                mpc::groth::mpc_test_prove_and_verify(2);
                 vec![]
             }
             c => unimplemented!("Cannot run_pairing {:?}", c),
         };
+        println!("Stats: {:#?}", channel::stats());
+        drop(inputs);
         println!("Outputs:");
         for (i, v) in outputs.iter().enumerate() {
             println!("  {}: {}", i, v);

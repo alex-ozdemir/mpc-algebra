@@ -10,6 +10,7 @@ use ark_relations::{
 };
 
 pub mod prover;
+pub mod r1cs_to_qap;
 
 pub fn vk_to_mpc(k: VerifyingKey<Bls12_377>) -> VerifyingKey<MpcPairingEngine<Bls12_377>> {
     VerifyingKey {
@@ -101,7 +102,7 @@ pub fn mpc_test_prove_and_verify(n_iters: usize) {
         let mut c = a;
         c.mul_assign(&b);
 
-        let mpc_proof = prover::create_random_proof::<_, _>(
+        let mpc_proof = prover::create_random_proof::<MpcPairingEngine<Bls12_377>, _, _>(
             MySillyCircuit {
                 a: Some(a),
                 b: Some(b),

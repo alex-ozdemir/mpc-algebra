@@ -1,46 +1,59 @@
-use super::*;
-use ark_bls12_377::Bls12_377;
-use ark_ec::{msm::VariableBaseMSM, AffineCurve, PairingEngine, ProjectiveCurve};
+#![allow(dead_code)]
+use crate::mpc::{MsmCurve, BatchProd};
+use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
 use ark_ff::{Field, PrimeField, UniformRand, Zero};
-use ark_groth16::{r1cs_to_qap::R1CStoQAP, Proof, ProvingKey, VerifyingKey};
+use super::r1cs_to_qap::R1CStoQAP;
+use ark_groth16::{Proof, ProvingKey, VerifyingKey};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystem, OptimizationGoal, Result as R1CSResult,
 };
 use ark_std::rand::Rng;
-use ark_std::{cfg_into_iter, cfg_iter, end_timer, start_timer, vec::Vec};
+use ark_std::{end_timer, start_timer, vec::Vec};
 use log::debug;
+
+// Changelog:
+// 1. Specialized to Bls12_377 (our MPC lifting machinery cannot be written fully generically b/c
+//    of Rust type system/ ark design limitations).
+// 2. Lift to MsmCurve.
+// 3. Remove zero-check for prover randomness r.
 
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-type E = MpcPairingEngine<Bls12_377>;
-
 /// Create a Groth16 proof that is zero-knowledge.
 /// This method samples randomness for zero knowledges via `rng`.
 #[inline]
-pub fn create_random_proof<C, R>(
+pub fn create_random_proof<E, C, R>(
     circuit: C,
     pk: &ProvingKey<E>,
     rng: &mut R,
 ) -> R1CSResult<Proof<E>>
 where
+    E: PairingEngine,
+    E::G1Affine: MsmCurve,
+    E::G2Affine: MsmCurve,
+    E::Fr: BatchProd,
     C: ConstraintSynthesizer<<E as PairingEngine>::Fr>,
     R: Rng,
 {
     let r = <E as PairingEngine>::Fr::rand(rng);
     let s = <E as PairingEngine>::Fr::rand(rng);
 
-    create_proof::<C>(circuit, pk, r, s)
+    create_proof::<E, C>(circuit, pk, r, s)
 }
 
 /// Create a Groth16 proof that is *not* zero-knowledge.
 #[inline]
-pub fn create_proof_no_zk<C>(circuit: C, pk: &ProvingKey<E>) -> R1CSResult<Proof<E>>
+pub fn create_proof_no_zk<E, C>(circuit: C, pk: &ProvingKey<E>) -> R1CSResult<Proof<E>>
 where
+    E: PairingEngine,
+    E::G1Affine: MsmCurve,
+    E::G2Affine: MsmCurve,
+    E::Fr: BatchProd,
     C: ConstraintSynthesizer<<E as PairingEngine>::Fr>,
 {
-    create_proof::<C>(
+    create_proof::<E, C>(
         circuit,
         pk,
         <E as PairingEngine>::Fr::zero(),
@@ -48,27 +61,23 @@ where
     )
 }
 
-macro_rules! mpc_debug {
-    ($e:expr) => {
-        debug!("{}: {}", stringify!($e), ($e).clone().publicize())
-    }
-}
-
 /// Create a Groth16 proof using randomness `r` and `s`.
 #[inline]
-pub fn create_proof<C>(
+pub fn create_proof<E, C>(
     circuit: C,
     pk: &ProvingKey<E>,
     r: <E as PairingEngine>::Fr,
     s: <E as PairingEngine>::Fr,
 ) -> R1CSResult<Proof<E>>
 where
+    E: PairingEngine,
+    E::G1Affine: MsmCurve,
+    E::G2Affine: MsmCurve,
+    E::Fr: BatchProd,
     C: ConstraintSynthesizer<<E as PairingEngine>::Fr>,
 {
     debug!("r: {}", r);
     debug!("s: {}", s);
-    mpc_debug!(r);
-    mpc_debug!(s);
     type D<F> = GeneralEvaluationDomain<F>;
 
     let prover_time = start_timer!(|| "Groth16::Prover");
@@ -92,19 +101,12 @@ where
         cs.clone(),
     )?;
     end_timer!(witness_map_time);
-    let h_assignment = cfg_into_iter!(h).map(|s| s.into_repr()).collect::<Vec<_>>();
     let c_acc_time = start_timer!(|| "Compute C");
-
-    let h_acc = VariableBaseMSM::multi_scalar_mul(&pk.h_query, &h_assignment).cast_to_shared();
+    let h_acc = <<E as PairingEngine>::G1Affine as MsmCurve>::multi_scalar_mul(&pk.h_query, &h);
     debug!("h_acc: {}", h_acc);
-    drop(h_assignment);
     // Compute C
     let prover = cs.borrow().unwrap();
-    let aux_assignment = cfg_iter!(prover.witness_assignment)
-        .map(|s| s.into_repr())
-        .collect::<Vec<_>>();
-
-    let l_aux_acc = VariableBaseMSM::multi_scalar_mul(&pk.l_query, &aux_assignment).cast_to_shared();
+    let l_aux_acc = <<E as PairingEngine>::G1Affine as MsmCurve>::multi_scalar_mul(&pk.l_query, &prover.witness_assignment);
 
     let r_s_delta_g1 = pk
         .delta_g1
@@ -115,16 +117,9 @@ where
 
     end_timer!(c_acc_time);
 
-    let input_assignment = prover.instance_assignment[1..]
-        .iter()
-        .map(|s| s.into_repr())
-        .collect::<Vec<_>>();
-
+    let assignment: Vec<<E as PairingEngine>::Fr> = prover.instance_assignment[1..].iter().chain(prover.witness_assignment.iter()).cloned().collect();
     drop(prover);
     drop(cs);
-
-    let assignment = [&input_assignment[..], &aux_assignment[..]].concat();
-    drop(aux_assignment);
 
     // Compute A
     let a_acc_time = start_timer!(|| "Compute A");
@@ -213,14 +208,14 @@ where
     }
 }
 
-fn calculate_coeff<G: AffineCurve>(
+fn calculate_coeff<G: AffineCurve + MsmCurve>(
     initial: G::Projective,
     query: &[G],
     vk_param: G,
-    assignment: &[<G::ScalarField as PrimeField>::BigInt],
-) -> G::Projective where G::Projective: MpcWire {
+    assignment: &[G::ScalarField],
+) -> G::Projective where {
     let el = query[0];
-    let acc = VariableBaseMSM::multi_scalar_mul(&query[1..], assignment).cast_to_shared();
+    let acc = G::multi_scalar_mul(&query[1..], assignment);
 
     let mut res = initial;
     res.add_assign_mixed(&el);

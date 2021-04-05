@@ -1,8 +1,11 @@
 use ark_bls12_377::Bls12_377;
+use ark_ec::msm::VariableBaseMSM;
 use ark_ec::{AffineCurve, PairingEngine, ProjectiveCurve};
-use ark_ff::{FftParameters, FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero};
+use ark_ff::{
+    FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, Zero,
+};
 use ark_serialize::*;
-use ark_std::UniformRand;
+use ark_std::{cfg_into_iter, UniformRand};
 use log::debug;
 use rand::prelude::*;
 use sha2::Digest;
@@ -263,7 +266,10 @@ macro_rules! impl_basics {
                     + Clone,
             > ark_serialize::CanonicalSerialize for $ty<F>
         {
-            fn serialize<W>(&self, w: W) -> std::result::Result<(), ark_serialize::SerializationError>
+            fn serialize<W>(
+                &self,
+                w: W,
+            ) -> std::result::Result<(), ark_serialize::SerializationError>
             where
                 W: ark_serialize::Write,
             {
@@ -336,8 +342,9 @@ macro_rules! impl_basics {
                     + ark_serialize::CanonicalSerialize
                     + ark_serialize::CanonicalDeserialize
                     + Clone,
-            > MpcWire for $ty<F> {
-                type Base = F;
+            > MpcWire for $ty<F>
+        {
+            type Base = F;
             fn publicize(self) -> Self {
                 if self.shared {
                     let mut other_val = channel::exchange(self.val.clone());
@@ -420,8 +427,8 @@ macro_rules! impl_basics {
                 i.fold($ty::zero(), Add::add)
             }
         }
-        impl<'a, F: 'a + ark_ff::Zero + Add<&'a F, Output = F> + Clone> ark_std::iter::Sum<&'a $ty<F>>
-            for $ty<F>
+        impl<'a, F: 'a + ark_ff::Zero + Add<&'a F, Output = F> + Clone>
+            ark_std::iter::Sum<&'a $ty<F>> for $ty<F>
         {
             fn sum<I>(i: I) -> Self
             where
@@ -430,8 +437,7 @@ macro_rules! impl_basics {
                 i.fold($ty::zero(), Add::add)
             }
         }
-
-    }
+    };
 }
 
 impl_basics!(MpcVal);
@@ -481,7 +487,10 @@ macro_rules! impl_mult_basics {
 
         impl<F: AddAssign<F>> AddAssign<$ty<F>> for $ty<F> {
             fn add_assign(&mut self, other: $ty<F>) {
-                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot add shared Fq* elements"
+                );
                 self.val.add_assign(other.val);
             }
         }
@@ -489,16 +498,20 @@ macro_rules! impl_mult_basics {
         impl<F: Add<F, Output = F>> Add<$ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn add(self, other: $ty<F>) -> Self::Output {
-                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
-                Self::from_public(
-                    self.val.add(other.val),
-                )
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot add shared Fq* elements"
+                );
+                Self::from_public(self.val.add(other.val))
             }
         }
 
         impl<'a, F: AddAssign<&'a F> + Clone> AddAssign<&'a $ty<F>> for $ty<F> {
             fn add_assign(&mut self, other: &'a $ty<F>) {
-                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot add shared Fq* elements"
+                );
                 self.val.add_assign(&other.val);
             }
         }
@@ -506,16 +519,20 @@ macro_rules! impl_mult_basics {
         impl<'a, F: Add<&'a F, Output = F> + Clone> Add<&'a $ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn add(self, other: &'a $ty<F>) -> Self::Output {
-                assert!(!self.shared && !other.shared, "Cannot add shared Fq* elements");
-                Self::from_public(
-                    self.val.add(&other.val),
-                )
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot add shared Fq* elements"
+                );
+                Self::from_public(self.val.add(&other.val))
             }
         }
 
         impl<F: SubAssign<F> + Neg<Output = F>> SubAssign<$ty<F>> for $ty<F> {
             fn sub_assign(&mut self, other: $ty<F>) {
-                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot sub shared Fq* elements"
+                );
                 self.val.sub_assign(other.val);
             }
         }
@@ -523,16 +540,20 @@ macro_rules! impl_mult_basics {
         impl<F: Sub<F, Output = F> + Neg<Output = F>> Sub<$ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn sub(self, other: $ty<F>) -> Self::Output {
-                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
-                Self::from_public(
-                    self.val.sub(other.val),
-                )
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot sub shared Fq* elements"
+                );
+                Self::from_public(self.val.sub(other.val))
             }
         }
 
         impl<'a, F: SubAssign<&'a F> + Clone + Neg<Output = F>> SubAssign<&'a $ty<F>> for $ty<F> {
             fn sub_assign(&mut self, other: &'a $ty<F>) {
-                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot sub shared Fq* elements"
+                );
                 self.val.sub_assign(&other.val);
             }
         }
@@ -540,10 +561,11 @@ macro_rules! impl_mult_basics {
         impl<'a, F: Sub<&'a F, Output = F> + Clone + Neg<Output = F>> Sub<&'a $ty<F>> for $ty<F> {
             type Output = $ty<F>;
             fn sub(self, other: &'a $ty<F>) -> Self::Output {
-                assert!(!self.shared && !other.shared, "Cannot sub shared Fq* elements");
-                Self::from_public(
-                    self.val.sub(&other.val),
-                )
+                assert!(
+                    !self.shared && !other.shared,
+                    "Cannot sub shared Fq* elements"
+                );
+                Self::from_public(self.val.sub(&other.val))
             }
         }
         impl<F: Neg<Output = F>> Neg for $ty<F> {
@@ -562,7 +584,10 @@ macro_rules! impl_mult_basics {
                     + Clone,
             > ark_serialize::CanonicalSerialize for $ty<F>
         {
-            fn serialize<W>(&self, w: W) -> std::result::Result<(), ark_serialize::SerializationError>
+            fn serialize<W>(
+                &self,
+                w: W,
+            ) -> std::result::Result<(), ark_serialize::SerializationError>
             where
                 W: ark_serialize::Write,
             {
@@ -629,291 +654,292 @@ macro_rules! impl_mult_basics {
                 self.val.serialized_size_with_flags::<Fl>()
             }
         }
-//        impl<F: std::fmt::Display> std::fmt::Display for $ty<F> {
-//            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//                write!(f, "{}", self.val)?;
-//                if self.shared {
-//                    write!(f, " (shared)")
-//                } else {
-//                    write!(f, " (public)")
-//                }
-//            }
-//        }
-//
-//        impl<T> $ty<T> {
-//            pub fn new(val: T, shared: bool) -> Self {
-//                Self { val, shared }
-//            }
-//            pub fn from_public(val: T) -> Self {
-//                Self::new(val, false)
-//            }
-//            pub fn from_shared(val: T) -> Self {
-//                Self::new(val, true)
-//            }
-//        }
-//
-//        impl<F: zeroize::Zeroize> zeroize::Zeroize for $ty<F> {
-//            fn zeroize(&mut self) {
-//                self.val.zeroize();
-//            }
-//        }
-//
-//        impl<F: ark_ff::ToBytes> ark_ff::ToBytes for $ty<F> {
-//            #[inline]
-//            fn write<W: ark_std::io::Write>(&self, writer: W) -> ark_std::io::Result<()> {
-//                assert!(!self.shared);
-//                self.val.write(writer)
-//            }
-//        }
-//
-//        impl<F: MulAssign<F>> AddAssign<$ty<F>> for $ty<F> {
-//            fn add_assign(&mut self, other: $ty<F>) {
-//                match (self.shared, other.shared) {
-//                    (true, false) => {
-//                        if channel::am_first() {
-//                            self.val.mul_assign(other.val);
-//                        } else {
-//                        }
-//                    }
-//                    (false, true) => {
-//                        if channel::am_first() {
-//                            self.val.mul_assign(other.val);
-//                        } else {
-//                            self.val = other.val;
-//                        }
-//                    }
-//                    _ => {
-//                        self.val.mul_assign(other.val);
-//                    }
-//                }
-//                self.shared = self.shared || other.shared;
-//            }
-//        }
-//
-//        impl<F: Mul<F, Output = F>> Add<$ty<F>> for $ty<F> {
-//            type Output = $ty<F>;
-//            fn add(self, other: $ty<F>) -> Self::Output {
-//                Self::new(
-//                    if self.shared == other.shared || channel::am_first() {
-//                        self.val.mul(other.val)
-//                    } else if other.shared {
-//                        other.val
-//                    } else {
-//                        self.val
-//                    },
-//                    self.shared || other.shared,
-//                )
-//            }
-//        }
-//
-//        impl<'a, F: MulAssign<&'a F> + Clone> AddAssign<&'a $ty<F>> for $ty<F> {
-//            fn add_assign(&mut self, other: &'a $ty<F>) {
-//                match (self.shared, other.shared) {
-//                    (true, false) => {
-//                        if channel::am_first() {
-//                            self.val.mul_assign(&other.val);
-//                        } else {
-//                        }
-//                    }
-//                    (false, true) => {
-//                        if channel::am_first() {
-//                            self.val.mul_assign(&other.val);
-//                        } else {
-//                            self.val = other.val.clone();
-//                        }
-//                    }
-//                    _ => {
-//                        self.val.mul_assign(&other.val);
-//                    }
-//                }
-//                self.shared = self.shared || other.shared;
-//            }
-//        }
-//
-//        impl<'a, F: Mul<&'a F, Output = F> + Clone> Add<&'a $ty<F>> for $ty<F> {
-//            type Output = $ty<F>;
-//            fn add(self, other: &'a $ty<F>) -> Self::Output {
-//                Self::new(
-//                    if self.shared == other.shared || channel::am_first() {
-//                        self.val.mul(&other.val)
-//                    } else if other.shared {
-//                        other.val.clone()
-//                    } else {
-//                        self.val
-//                    },
-//                    self.shared || other.shared,
-//                )
-//            }
-//        }
-//
-//        impl<F: Field> SubAssign<$ty<F>> for $ty<F> {
-//            fn sub_assign(&mut self, other: $ty<F>) {
-//                match (self.shared, other.shared) {
-//                    (true, false) => {
-//                        if channel::am_first() {
-//                            self.val.div_assign(other.val);
-//                        } else {
-//                        }
-//                    }
-//                    (false, true) => {
-//                        if channel::am_first() {
-//                            self.val.div_assign(other.val);
-//                        } else {
-//                            self.val.inverse_in_place().unwrap();
-//                        }
-//                    }
-//                    _ => {
-//                        self.val.div_assign(other.val);
-//                    }
-//                }
-//                self.shared = self.shared || other.shared;
-//            }
-//        }
-//
-//        impl<F: Field> Sub<$ty<F>> for $ty<F> {
-//            type Output = $ty<F>;
-//            fn sub(self, other: $ty<F>) -> Self::Output {
-//                Self::new(
-//                    if self.shared == other.shared || channel::am_first() {
-//                        self.val.div(other.val)
-//                    } else if other.shared {
-//                        other.val.inverse().unwrap()
-//                    } else {
-//                        self.val
-//                    },
-//                    self.shared || other.shared,
-//                )
-//            }
-//        }
-//
-//        impl<'a, F: Field> SubAssign<&'a $ty<F>> for $ty<F> {
-//            fn sub_assign(&mut self, other: &'a $ty<F>) {
-//                match (self.shared, other.shared) {
-//                    (true, false) => {
-//                        if channel::am_first() {
-//                            self.val.div_assign(&other.val);
-//                        } else {
-//                        }
-//                    }
-//                    (false, true) => {
-//                        if channel::am_first() {
-//                            self.val.div_assign(&other.val);
-//                        } else {
-//                            self.val.inverse_in_place().unwrap();
-//                        }
-//                    }
-//                    _ => {
-//                        self.val.sub_assign(&other.val);
-//                    }
-//                }
-//                self.shared = self.shared || other.shared;
-//            }
-//        }
-//
-//        impl<'a, F: Field> Sub<&'a $ty<F>> for $ty<F> {
-//            type Output = $ty<F>;
-//            fn sub(self, other: &'a $ty<F>) -> Self::Output {
-//                Self::new(
-//                    if self.shared == other.shared || channel::am_first() {
-//                        self.val.div(&other.val)
-//                    } else if other.shared {
-//                        other.val.inverse().unwrap()
-//                    } else {
-//                        self.val
-//                    },
-//                    self.shared || other.shared,
-//                )
-//            }
-//        }
-//        impl<F: Field> Neg for $ty<F> {
-//            type Output = $ty<F>;
-//            fn neg(mut self) -> Self::Output {
-//                self.val.inverse_in_place().unwrap();
-//                self
-//            }
-//        }
-//        impl<
-//                F: for<'a> MulAssign<&'a F>
-//                    + ark_serialize::CanonicalSerialize
-//                    + ark_serialize::CanonicalDeserialize
-//                    + Clone,
-//            > ark_serialize::CanonicalSerialize for $ty<F>
-//        {
-//            fn serialize<W>(&self, w: W) -> std::result::Result<(), ark_serialize::SerializationError>
-//            where
-//                W: ark_serialize::Write,
-//            {
-//                self.publicize_cow().val.serialize(w)
-//            }
-//            fn serialized_size(&self) -> usize {
-//                self.val.serialized_size()
-//            }
-//        }
-//        impl<
-//                F: for<'a> MulAssign<&'a F>
-//                    + ark_serialize::CanonicalSerialize
-//                    + ark_serialize::CanonicalDeserialize
-//                    + Clone,
-//            > ark_serialize::CanonicalDeserialize for $ty<F>
-//        {
-//            fn deserialize<R>(r: R) -> std::result::Result<Self, ark_serialize::SerializationError>
-//            where
-//                R: ark_serialize::Read,
-//            {
-//                F::deserialize(r).map($ty::from_public)
-//            }
-//        }
-//        impl<
-//                F: for<'a> MulAssign<&'a F>
-//                    + ark_serialize::CanonicalSerialize
-//                    + ark_serialize::CanonicalDeserializeWithFlags
-//                    + Clone,
-//            > ark_serialize::CanonicalDeserializeWithFlags for $ty<F>
-//        {
-//            fn deserialize_with_flags<R, Fl>(
-//                r: R,
-//            ) -> std::result::Result<(Self, Fl), ark_serialize::SerializationError>
-//            where
-//                R: ark_serialize::Read,
-//                Fl: Flags,
-//            {
-//                F::deserialize_with_flags(r).map(|(s, f)| ($ty::from_public(s), f))
-//            }
-//        }
-//
-//        impl<
-//                F: for<'a> MulAssign<&'a F>
-//                    + ark_serialize::CanonicalSerializeWithFlags
-//                    + ark_serialize::CanonicalDeserialize
-//                    + Clone,
-//            > ark_serialize::CanonicalSerializeWithFlags for $ty<F>
-//        {
-//            fn serialize_with_flags<W, Fl>(
-//                &self,
-//                w: W,
-//                f: Fl,
-//            ) -> std::result::Result<(), ark_serialize::SerializationError>
-//            where
-//                W: ark_serialize::Write,
-//                Fl: Flags,
-//            {
-//                self.publicize_cow().val.serialize_with_flags(w, f)
-//            }
-//            fn serialized_size_with_flags<Fl>(&self) -> usize
-//            where
-//                Fl: ark_serialize::Flags,
-//            {
-//                self.val.serialized_size_with_flags::<Fl>()
-//            }
-//        }
+        //        impl<F: std::fmt::Display> std::fmt::Display for $ty<F> {
+        //            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        //                write!(f, "{}", self.val)?;
+        //                if self.shared {
+        //                    write!(f, " (shared)")
+        //                } else {
+        //                    write!(f, " (public)")
+        //                }
+        //            }
+        //        }
+        //
+        //        impl<T> $ty<T> {
+        //            pub fn new(val: T, shared: bool) -> Self {
+        //                Self { val, shared }
+        //            }
+        //            pub fn from_public(val: T) -> Self {
+        //                Self::new(val, false)
+        //            }
+        //            pub fn from_shared(val: T) -> Self {
+        //                Self::new(val, true)
+        //            }
+        //        }
+        //
+        //        impl<F: zeroize::Zeroize> zeroize::Zeroize for $ty<F> {
+        //            fn zeroize(&mut self) {
+        //                self.val.zeroize();
+        //            }
+        //        }
+        //
+        //        impl<F: ark_ff::ToBytes> ark_ff::ToBytes for $ty<F> {
+        //            #[inline]
+        //            fn write<W: ark_std::io::Write>(&self, writer: W) -> ark_std::io::Result<()> {
+        //                assert!(!self.shared);
+        //                self.val.write(writer)
+        //            }
+        //        }
+        //
+        //        impl<F: MulAssign<F>> AddAssign<$ty<F>> for $ty<F> {
+        //            fn add_assign(&mut self, other: $ty<F>) {
+        //                match (self.shared, other.shared) {
+        //                    (true, false) => {
+        //                        if channel::am_first() {
+        //                            self.val.mul_assign(other.val);
+        //                        } else {
+        //                        }
+        //                    }
+        //                    (false, true) => {
+        //                        if channel::am_first() {
+        //                            self.val.mul_assign(other.val);
+        //                        } else {
+        //                            self.val = other.val;
+        //                        }
+        //                    }
+        //                    _ => {
+        //                        self.val.mul_assign(other.val);
+        //                    }
+        //                }
+        //                self.shared = self.shared || other.shared;
+        //            }
+        //        }
+        //
+        //        impl<F: Mul<F, Output = F>> Add<$ty<F>> for $ty<F> {
+        //            type Output = $ty<F>;
+        //            fn add(self, other: $ty<F>) -> Self::Output {
+        //                Self::new(
+        //                    if self.shared == other.shared || channel::am_first() {
+        //                        self.val.mul(other.val)
+        //                    } else if other.shared {
+        //                        other.val
+        //                    } else {
+        //                        self.val
+        //                    },
+        //                    self.shared || other.shared,
+        //                )
+        //            }
+        //        }
+        //
+        //        impl<'a, F: MulAssign<&'a F> + Clone> AddAssign<&'a $ty<F>> for $ty<F> {
+        //            fn add_assign(&mut self, other: &'a $ty<F>) {
+        //                match (self.shared, other.shared) {
+        //                    (true, false) => {
+        //                        if channel::am_first() {
+        //                            self.val.mul_assign(&other.val);
+        //                        } else {
+        //                        }
+        //                    }
+        //                    (false, true) => {
+        //                        if channel::am_first() {
+        //                            self.val.mul_assign(&other.val);
+        //                        } else {
+        //                            self.val = other.val.clone();
+        //                        }
+        //                    }
+        //                    _ => {
+        //                        self.val.mul_assign(&other.val);
+        //                    }
+        //                }
+        //                self.shared = self.shared || other.shared;
+        //            }
+        //        }
+        //
+        //        impl<'a, F: Mul<&'a F, Output = F> + Clone> Add<&'a $ty<F>> for $ty<F> {
+        //            type Output = $ty<F>;
+        //            fn add(self, other: &'a $ty<F>) -> Self::Output {
+        //                Self::new(
+        //                    if self.shared == other.shared || channel::am_first() {
+        //                        self.val.mul(&other.val)
+        //                    } else if other.shared {
+        //                        other.val.clone()
+        //                    } else {
+        //                        self.val
+        //                    },
+        //                    self.shared || other.shared,
+        //                )
+        //            }
+        //        }
+        //
+        //        impl<F: Field> SubAssign<$ty<F>> for $ty<F> {
+        //            fn sub_assign(&mut self, other: $ty<F>) {
+        //                match (self.shared, other.shared) {
+        //                    (true, false) => {
+        //                        if channel::am_first() {
+        //                            self.val.div_assign(other.val);
+        //                        } else {
+        //                        }
+        //                    }
+        //                    (false, true) => {
+        //                        if channel::am_first() {
+        //                            self.val.div_assign(other.val);
+        //                        } else {
+        //                            self.val.inverse_in_place().unwrap();
+        //                        }
+        //                    }
+        //                    _ => {
+        //                        self.val.div_assign(other.val);
+        //                    }
+        //                }
+        //                self.shared = self.shared || other.shared;
+        //            }
+        //        }
+        //
+        //        impl<F: Field> Sub<$ty<F>> for $ty<F> {
+        //            type Output = $ty<F>;
+        //            fn sub(self, other: $ty<F>) -> Self::Output {
+        //                Self::new(
+        //                    if self.shared == other.shared || channel::am_first() {
+        //                        self.val.div(other.val)
+        //                    } else if other.shared {
+        //                        other.val.inverse().unwrap()
+        //                    } else {
+        //                        self.val
+        //                    },
+        //                    self.shared || other.shared,
+        //                )
+        //            }
+        //        }
+        //
+        //        impl<'a, F: Field> SubAssign<&'a $ty<F>> for $ty<F> {
+        //            fn sub_assign(&mut self, other: &'a $ty<F>) {
+        //                match (self.shared, other.shared) {
+        //                    (true, false) => {
+        //                        if channel::am_first() {
+        //                            self.val.div_assign(&other.val);
+        //                        } else {
+        //                        }
+        //                    }
+        //                    (false, true) => {
+        //                        if channel::am_first() {
+        //                            self.val.div_assign(&other.val);
+        //                        } else {
+        //                            self.val.inverse_in_place().unwrap();
+        //                        }
+        //                    }
+        //                    _ => {
+        //                        self.val.sub_assign(&other.val);
+        //                    }
+        //                }
+        //                self.shared = self.shared || other.shared;
+        //            }
+        //        }
+        //
+        //        impl<'a, F: Field> Sub<&'a $ty<F>> for $ty<F> {
+        //            type Output = $ty<F>;
+        //            fn sub(self, other: &'a $ty<F>) -> Self::Output {
+        //                Self::new(
+        //                    if self.shared == other.shared || channel::am_first() {
+        //                        self.val.div(&other.val)
+        //                    } else if other.shared {
+        //                        other.val.inverse().unwrap()
+        //                    } else {
+        //                        self.val
+        //                    },
+        //                    self.shared || other.shared,
+        //                )
+        //            }
+        //        }
+        //        impl<F: Field> Neg for $ty<F> {
+        //            type Output = $ty<F>;
+        //            fn neg(mut self) -> Self::Output {
+        //                self.val.inverse_in_place().unwrap();
+        //                self
+        //            }
+        //        }
+        //        impl<
+        //                F: for<'a> MulAssign<&'a F>
+        //                    + ark_serialize::CanonicalSerialize
+        //                    + ark_serialize::CanonicalDeserialize
+        //                    + Clone,
+        //            > ark_serialize::CanonicalSerialize for $ty<F>
+        //        {
+        //            fn serialize<W>(&self, w: W) -> std::result::Result<(), ark_serialize::SerializationError>
+        //            where
+        //                W: ark_serialize::Write,
+        //            {
+        //                self.publicize_cow().val.serialize(w)
+        //            }
+        //            fn serialized_size(&self) -> usize {
+        //                self.val.serialized_size()
+        //            }
+        //        }
+        //        impl<
+        //                F: for<'a> MulAssign<&'a F>
+        //                    + ark_serialize::CanonicalSerialize
+        //                    + ark_serialize::CanonicalDeserialize
+        //                    + Clone,
+        //            > ark_serialize::CanonicalDeserialize for $ty<F>
+        //        {
+        //            fn deserialize<R>(r: R) -> std::result::Result<Self, ark_serialize::SerializationError>
+        //            where
+        //                R: ark_serialize::Read,
+        //            {
+        //                F::deserialize(r).map($ty::from_public)
+        //            }
+        //        }
+        //        impl<
+        //                F: for<'a> MulAssign<&'a F>
+        //                    + ark_serialize::CanonicalSerialize
+        //                    + ark_serialize::CanonicalDeserializeWithFlags
+        //                    + Clone,
+        //            > ark_serialize::CanonicalDeserializeWithFlags for $ty<F>
+        //        {
+        //            fn deserialize_with_flags<R, Fl>(
+        //                r: R,
+        //            ) -> std::result::Result<(Self, Fl), ark_serialize::SerializationError>
+        //            where
+        //                R: ark_serialize::Read,
+        //                Fl: Flags,
+        //            {
+        //                F::deserialize_with_flags(r).map(|(s, f)| ($ty::from_public(s), f))
+        //            }
+        //        }
+        //
+        //        impl<
+        //                F: for<'a> MulAssign<&'a F>
+        //                    + ark_serialize::CanonicalSerializeWithFlags
+        //                    + ark_serialize::CanonicalDeserialize
+        //                    + Clone,
+        //            > ark_serialize::CanonicalSerializeWithFlags for $ty<F>
+        //        {
+        //            fn serialize_with_flags<W, Fl>(
+        //                &self,
+        //                w: W,
+        //                f: Fl,
+        //            ) -> std::result::Result<(), ark_serialize::SerializationError>
+        //            where
+        //                W: ark_serialize::Write,
+        //                Fl: Flags,
+        //            {
+        //                self.publicize_cow().val.serialize_with_flags(w, f)
+        //            }
+        //            fn serialized_size_with_flags<Fl>(&self) -> usize
+        //            where
+        //                Fl: ark_serialize::Flags,
+        //            {
+        //                self.val.serialized_size_with_flags::<Fl>()
+        //            }
+        //        }
 
         impl<
                 F: for<'a> MulAssign<&'a F>
                     + ark_serialize::CanonicalSerialize
                     + ark_serialize::CanonicalDeserialize
                     + Clone,
-            > MpcWire for $ty<F> {
-                type Base = F;
+            > MpcWire for $ty<F>
+        {
+            type Base = F;
             fn publicize(self) -> Self {
                 if self.shared {
                     let mut other_val = channel::exchange(self.val.clone());
@@ -997,8 +1023,8 @@ macro_rules! impl_mult_basics {
                 i.fold($ty::zero(), Add::add)
             }
         }
-        impl<'a, F: 'a + ark_ff::Zero + Add<&'a F, Output = F> + Clone> ark_std::iter::Sum<&'a $ty<F>>
-            for $ty<F>
+        impl<'a, F: 'a + ark_ff::Zero + Add<&'a F, Output = F> + Clone>
+            ark_std::iter::Sum<&'a $ty<F>> for $ty<F>
         {
             fn sum<I>(i: I) -> Self
             where
@@ -1035,8 +1061,7 @@ macro_rules! impl_mult_basics {
         //        i.fold($ty::zero(), Add::add)
         //    }
         //}
-
-    }
+    };
 }
 
 impl_mult_basics!(MpcMulVal);
@@ -1051,7 +1076,7 @@ macro_rules! wrap_conv {
                 }
             }
         }
-    }
+    };
 }
 
 wrap_conv!(MpcCurve, MpcCurve2);
@@ -1097,7 +1122,6 @@ macro_rules! wrap_mul {
                 self.shared = self.shared || other.shared;
             }
         }
-
 
         impl<F: Field> Mul<$wrap<F>> for $wrap<F> {
             type Output = $wrap<F>;
@@ -1190,12 +1214,11 @@ macro_rules! wrap_mul {
                 i.fold($wrap::one(), Mul::mul)
             }
         }
-    }
+    };
 }
 
 macro_rules! wrap_lin_mul {
     ($wrap:ident) => {
-
         impl<F: Field> MulAssign<$wrap<F>> for $wrap<F> {
             fn mul_assign(&mut self, other: $wrap<F>) {
                 match (self.shared, other.shared) {
@@ -1219,7 +1242,6 @@ macro_rules! wrap_lin_mul {
                 self.shared = self.shared || other.shared;
             }
         }
-
 
         impl<F: Field> Mul<$wrap<F>> for $wrap<F> {
             type Output = $wrap<F>;
@@ -1358,7 +1380,7 @@ macro_rules! wrap_lin_mul {
                 i.fold($wrap::one(), Mul::mul)
             }
         }
-    }
+    };
 }
 
 wrap_mul!(MpcVal);
@@ -1402,7 +1424,6 @@ from_prim!(u16, MpcMulVal);
 from_prim!(u32, MpcMulVal);
 from_prim!(u64, MpcMulVal);
 from_prim!(u128, MpcMulVal);
-
 
 macro_rules! shared_field {
     ($Pf:ty,$PrimeField:ty) => {
@@ -1624,7 +1645,6 @@ shared_mul_field!(ark_bls12_377::Fq12, ark_bls12_377::Fq);
 
 macro_rules! curve_impl {
     ($curve:path, $curve_proj:path, $base:path, $scalar:path, $cofactor:path, $curve_wrapper:ident) => {
-
         impl AffineCurve for $curve_wrapper<$curve> {
             type ScalarField = MpcVal<$scalar>;
             const COFACTOR: &'static [u64] = $cofactor;
@@ -1682,14 +1702,19 @@ macro_rules! curve_impl {
                 self
             }
             fn add_assign_mixed(&mut self, o: &<Self as ProjectiveCurve>::Affine) {
-                debug!("ProjectiveCurve::add_assign_mixed({}, {})", self.shared, o.shared);
+                debug!(
+                    "ProjectiveCurve::add_assign_mixed({}, {})",
+                    self.shared, o.shared
+                );
                 match (self.shared, o.shared) {
                     (true, true) | (false, false) => {
                         self.val.add_assign_mixed(&o.val);
                     }
-                    (true, false) => if channel::am_first() {
-                        self.val.add_assign_mixed(&o.val);
-                    } else {
+                    (true, false) => {
+                        if channel::am_first() {
+                            self.val.add_assign_mixed(&o.val);
+                        } else {
+                        }
                     }
                     (false, true) => {
                         self.val = o.val.into();
@@ -1709,12 +1734,12 @@ macro_rules! curve_impl {
                 }
             }
         }
-    }
+    };
 }
 
 // macro_rules! group_impl {
 //     ($gp:path, $scalar:path) => {
-// 
+//
 //         impl Group for MpcCurve<$gp> {
 //             type ScalarField = MpcVal<$scalar>;
 //             fn double_in_place<'a> (&'a mut self) -> &'a mut Self {
@@ -1731,8 +1756,22 @@ macro_rules! curve_impl {
 //     }
 // }
 
-curve_impl!(ark_bls12_377::G1Affine, ark_bls12_377::G1Projective, ark_bls12_377::Fq, ark_bls12_377::Fr, ark_bls12_377::G1Affine::COFACTOR, MpcCurve);
-curve_impl!(ark_bls12_377::G2Affine, ark_bls12_377::G2Projective, ark_bls12_377::Fq2, ark_bls12_377::Fr, ark_bls12_377::G2Affine::COFACTOR, MpcCurve2);
+curve_impl!(
+    ark_bls12_377::G1Affine,
+    ark_bls12_377::G1Projective,
+    ark_bls12_377::Fq,
+    ark_bls12_377::Fr,
+    ark_bls12_377::G1Affine::COFACTOR,
+    MpcCurve
+);
+curve_impl!(
+    ark_bls12_377::G2Affine,
+    ark_bls12_377::G2Projective,
+    ark_bls12_377::Fq2,
+    ark_bls12_377::Fr,
+    ark_bls12_377::G2Affine::COFACTOR,
+    MpcCurve2
+);
 //group_impl!(ark_bls12_377::G1Projective, ark_bls12_377::Fr);
 
 //    type ScalarField: PrimeField + SquareRootField + Into<<Self::ScalarField
@@ -1769,14 +1808,13 @@ macro_rules! impl_prep {
                 Self::new(f.val.into(), f.shared)
             }
         }
-    }
+    };
 }
 
 type BlsG1Prep = <ark_bls12_377::Bls12_377 as PairingEngine>::G1Prepared;
 impl_prep!(MpcCurve, ark_bls12_377::G1Affine, MpcPrepCurve, BlsG1Prep);
 type BlsG2Prep = <ark_bls12_377::Bls12_377 as PairingEngine>::G2Prepared;
 impl_prep!(MpcCurve2, ark_bls12_377::G2Affine, MpcPrepCurve2, BlsG2Prep);
-
 
 impl PairingEngine for MpcPairingEngine<Bls12_377> {
     type Fr = MpcVal<<Bls12_377 as PairingEngine>::Fr>;
@@ -1823,8 +1861,10 @@ impl PairingEngine for MpcPairingEngine<Bls12_377> {
     {
         let p: Self::G1Affine = p.into();
         let q: Self::G2Affine = q.into();
-        let p_val: MpcVal<<Bls12_377 as PairingEngine>::G1Projective> = MpcVal::new(p.val.into(), p.shared);
-        let q_val: MpcVal<<Bls12_377 as PairingEngine>::G2Projective> = MpcVal::new(q.val.into(), q.shared);
+        let p_val: MpcVal<<Bls12_377 as PairingEngine>::G1Projective> =
+            MpcVal::new(p.val.into(), p.shared);
+        let q_val: MpcVal<<Bls12_377 as PairingEngine>::G2Projective> =
+            MpcVal::new(q.val.into(), q.shared);
         channel::pairing::<Bls12_377>(p_val, q_val).into()
     }
 }
@@ -1959,3 +1999,63 @@ impl ComField for MpcVal<<Bls12_377 as PairingEngine>::Fr> {
         &(hash1, hash0) == c
     }
 }
+
+/// multi-scalar multiplication curve
+pub trait MsmCurve: AffineCurve {
+    /// Perform a multi-scalar multiplication.
+    /// That is, compute P = sum_i s_i * P_i
+    fn multi_scalar_mul(bases: &[Self], scalars: &[Self::ScalarField]) -> Self::Projective {
+        assert_eq!(bases.len(), scalars.len());
+        let bigint_scalars = cfg_into_iter!(scalars)
+            .map(|s| s.into_repr())
+            .collect::<Vec<_>>();
+        let product = VariableBaseMSM::multi_scalar_mul(&bases, &bigint_scalars);
+        product
+    }
+}
+
+pub trait BatchProd: Field {
+    fn batch_product(mut xs: Vec<Self>, ys: Vec<Self>) -> Vec<Self> {
+        assert_eq!(xs.len(), ys.len());
+        ark_std::cfg_iter_mut!(xs)
+            .zip(ys)
+            .for_each(|(a, b)| *a *= b);
+
+        xs
+    }
+}
+
+impl MsmCurve for ark_bls12_377::G1Affine {}
+impl BatchProd for ark_bls12_377::Fr {}
+impl BatchProd for MpcVal<ark_bls12_377::Fr> {
+    fn batch_product(xs: Vec<Self>, ys: Vec<Self>) -> Vec<Self> {
+        channel::field_batch_mul(xs, ys)
+    }
+}
+
+macro_rules! impl_msm {
+    ($wrap:ident, $curve:ty) => {
+        impl MsmCurve for $wrap<$curve> {
+            fn multi_scalar_mul(bases: &[Self], scalars: &[Self::ScalarField]) -> Self::Projective {
+                assert!(bases.iter().all(|b| !b.shared));
+                assert!(scalars.iter().all(|b| b.shared));
+                let bigint_scalars = cfg_into_iter!(scalars)
+                    .map(|s| s.into_repr())
+                    .collect::<Vec<_>>();
+                let product = VariableBaseMSM::multi_scalar_mul(&bases, &bigint_scalars);
+                // This is shared because the big intergers are representations of a shared value.
+                product.cast_to_shared()
+            }
+        }
+    }
+}
+
+impl_msm!(MpcCurve, ark_bls12_377::G1Affine);
+impl_msm!(MpcCurve2, ark_bls12_377::G2Affine);
+
+macro_rules! mpc_debug {
+    ($e:expr) => {
+        debug!("{}: {}", stringify!($e), ($e).clone().publicize())
+    }
+}
+
