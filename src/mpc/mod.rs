@@ -1462,11 +1462,11 @@ macro_rules! shared_field {
             }
             fn square_in_place(&mut self) -> &mut Self {
                 if self.shared {
-                    unimplemented!()
+                    *self = channel::field_mul(self.clone(), *self);
                 } else {
                     self.val.square_in_place();
-                    self
                 }
+                self
             }
             fn inverse(&self) -> Option<Self> {
                 if self.shared {
@@ -2005,7 +2005,7 @@ pub trait MsmCurve: AffineCurve {
     /// Perform a multi-scalar multiplication.
     /// That is, compute P = sum_i s_i * P_i
     fn multi_scalar_mul(bases: &[Self], scalars: &[Self::ScalarField]) -> Self::Projective {
-        assert_eq!(bases.len(), scalars.len());
+        //assert_eq!(bases.len(), scalars.len());
         let bigint_scalars = cfg_into_iter!(scalars)
             .map(|s| s.into_repr())
             .collect::<Vec<_>>();
@@ -2014,24 +2014,7 @@ pub trait MsmCurve: AffineCurve {
     }
 }
 
-pub trait BatchProd: Field {
-    fn batch_product(mut xs: Vec<Self>, ys: Vec<Self>) -> Vec<Self> {
-        assert_eq!(xs.len(), ys.len());
-        ark_std::cfg_iter_mut!(xs)
-            .zip(ys)
-            .for_each(|(a, b)| *a *= b);
-
-        xs
-    }
-}
-
-impl MsmCurve for ark_bls12_377::G1Affine {}
-impl BatchProd for ark_bls12_377::Fr {}
-impl BatchProd for MpcVal<ark_bls12_377::Fr> {
-    fn batch_product(xs: Vec<Self>, ys: Vec<Self>) -> Vec<Self> {
-        channel::field_batch_mul(xs, ys)
-    }
-}
+impl<P: ark_ec::models::SWModelParameters> MsmCurve for ark_ec::short_weierstrass_jacobian::GroupAffine<P> {}
 
 macro_rules! impl_msm {
     ($wrap:ident, $curve:ty) => {
@@ -2052,6 +2035,23 @@ macro_rules! impl_msm {
 
 impl_msm!(MpcCurve, ark_bls12_377::G1Affine);
 impl_msm!(MpcCurve2, ark_bls12_377::G2Affine);
+
+pub trait BatchProd: Field {
+    fn batch_product(mut xs: Vec<Self>, ys: Vec<Self>) -> Vec<Self> {
+        assert_eq!(xs.len(), ys.len());
+        ark_std::cfg_iter_mut!(xs)
+            .zip(ys)
+            .for_each(|(a, b)| *a *= b);
+
+        xs
+    }
+}
+impl BatchProd for ark_bls12_377::Fr {}
+impl BatchProd for MpcVal<ark_bls12_377::Fr> {
+    fn batch_product(xs: Vec<Self>, ys: Vec<Self>) -> Vec<Self> {
+        channel::field_batch_mul(xs, ys)
+    }
+}
 
 macro_rules! mpc_debug {
     ($e:expr) => {

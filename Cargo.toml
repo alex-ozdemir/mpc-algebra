@@ -8,6 +8,10 @@ edition = "2018"
 name = "client"
 path = "src/client.rs"
 
+[[bin]]
+name = "proof"
+path = "src/proof.rs"
+
 [dependencies]
 ark-ff = { version = "0.2.0", default-features = false }
 ark-bls12-377 = { version = "0.2.0", default-features = false, features = ["curve"] }
@@ -15,7 +19,7 @@ ark-ec = { version = "0.2.0", default-features = false }
 ark-poly = { version = "0.2.0", default-features = false }
 ark-relations = { version = "0.2.0", default-features = false }
 ark-serialize = { version = "0.2.0", default-features = false, features = [ "derive" ] }
-ark-std = { version = "0.2.0", default-features = false }
+ark-std = { version = "0.2.0", default-features = false, features = [ "print-trace" ] }
 ark-groth16 = { version = "0.2.0", default-features = false, features = [ "std" ] }
 lazy_static = "1"
 derivative = { version = "2.0", features = ["use_core"], optional = true}

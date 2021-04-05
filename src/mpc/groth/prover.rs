@@ -101,6 +101,7 @@ where
         cs.clone(),
     )?;
     end_timer!(witness_map_time);
+    let prover_crypto_time = start_timer!(|| "crypto");
     let c_acc_time = start_timer!(|| "Compute C");
     let h_acc = <<E as PairingEngine>::G1Affine as MsmCurve>::multi_scalar_mul(&pk.h_query, &h);
     debug!("h_acc: {}", h_acc);
@@ -162,6 +163,7 @@ where
     g_c += &l_aux_acc;
     g_c += &h_acc;
     end_timer!(c_time);
+    end_timer!(prover_crypto_time);
 
     end_timer!(prover_time);
 

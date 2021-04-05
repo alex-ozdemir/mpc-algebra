@@ -8,7 +8,7 @@ use super::MpcVal;
 use ark_ec::{PairingEngine, ProjectiveCurve};
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::cfg_iter_mut;
+use ark_std::{cfg_iter_mut, start_timer, end_timer};
 
 lazy_static! {
     static ref CH: Mutex<FieldChannel> = Mutex::new(FieldChannel::default());
@@ -98,7 +98,6 @@ impl FieldChannel {
         s.write_all(&bytes[..]).unwrap();
         s.write_all(v).unwrap();
         self.bytes_sent += bytes.len() + v.len();
-        debug!("Recv: {}", bytes.len() + v.len());
     }
 
     fn recv_vec(&mut self) -> Vec<u8> {
@@ -108,13 +107,13 @@ impl FieldChannel {
         let mut bytes = vec![0u8; u64::from_ne_bytes(len) as usize];
         s.read_exact(&mut bytes[..]).unwrap();
         self.bytes_recv += bytes.len() + len.len();
-        debug!("Sent: {}", bytes.len() + len.len());
         bytes
     }
 
     fn exchange<F: CanonicalSerialize + CanonicalDeserialize>(&mut self, f: F) -> F {
         let mut bytes_out = Vec::new();
         f.serialize(&mut bytes_out).unwrap();
+        debug!("Exchange serde: {}", bytes_out.len());
         let bytes_in = if self.talk_first {
             self.send_slice(&bytes_out[..]);
             self.recv_vec()
@@ -128,6 +127,7 @@ impl FieldChannel {
     }
 
     fn exchange_bytes(&mut self, f: Vec<u8>) -> Vec<u8> {
+        debug!("Exchange bytes: {}", f.len());
         self.exchanges += 1;
         if self.talk_first {
             self.send_slice(&f[..]);
@@ -156,7 +156,10 @@ impl FieldChannel {
         }
     }
 
-    fn field_triples<F: Field>(&self, n: usize) -> (Vec<MpcVal<F>>, Vec<MpcVal<F>>, Vec<MpcVal<F>>) {
+    fn field_triples<F: Field>(
+        &self,
+        n: usize,
+    ) -> (Vec<MpcVal<F>>, Vec<MpcVal<F>>, Vec<MpcVal<F>>) {
         let mut a = Vec::new();
         let mut b = Vec::new();
         let mut c = Vec::new();
@@ -192,25 +195,32 @@ impl FieldChannel {
             a
         }
     }
-    fn field_batch_mul<F: Field>(&mut self, mut a: Vec<MpcVal<F>>, mut b: Vec<MpcVal<F>>) -> Vec<MpcVal<F>> {
+    fn field_batch_mul<F: Field>(
+        &mut self,
+        mut a: Vec<MpcVal<F>>,
+        mut b: Vec<MpcVal<F>>,
+    ) -> Vec<MpcVal<F>> {
+        let start = start_timer!(|| "batch multiply");
         //TODO: consider parallel iteration
         let a_shared = a[0].shared;
         assert!(a.iter().all(|a| a.shared == a_shared));
         let b_shared = b[0].shared;
         assert!(b.iter().all(|a| a.shared == b_shared));
-        if a_shared && b_shared {
+        let r = if a_shared && b_shared {
             // x * y = z
             let (xs, ys, mut zs) = self.field_triples(a.len());
             // xa = x + a
-            for (a, x) in a.iter_mut().zip(xs.iter())  {
+            for (a, x) in a.iter_mut().zip(xs.iter()) {
                 a.val += x.val;
             }
-            let xas = self.field_batch_publicize(a);
             // yb = y + b
-            for (b, y) in b.iter_mut().zip(ys.iter())  {
+            for (b, y) in b.iter_mut().zip(ys.iter()) {
                 b.val += y.val;
             }
+            let start_net = start_timer!(|| "batch multiply: exchange");
+            let xas = self.field_batch_publicize(a);
             let ybs = self.field_batch_publicize(b);
+            end_timer!(start_net);
             // xy - (x+a)y - x(y+b) + (x+a)(y+b) = ab
             for i in 0..zs.len() {
                 zs[i].val -= ys[i].val * &xas[i].val;
@@ -226,7 +236,9 @@ impl FieldChannel {
                 a[i].shared = a[i].shared || b[i].shared;
             }
             a
-        }
+        };
+        end_timer!(start);
+        r
     }
 
     fn field_add<F: Field>(&mut self, mut a: MpcVal<F>, b: &MpcVal<F>) -> MpcVal<F> {
@@ -291,7 +303,8 @@ impl FieldChannel {
         let bytes_in = self.exchange_bytes(bytes_out);
         for (i, a) in a.iter_mut().enumerate() {
             a.shared = false;
-            a.val += F::deserialize(&bytes_in[i*bytes_per_elem..(i+1)*bytes_per_elem]).unwrap();
+            a.val +=
+                F::deserialize(&bytes_in[i * bytes_per_elem..(i + 1) * bytes_per_elem]).unwrap();
         }
         a
     }
@@ -442,6 +455,11 @@ impl FieldChannel {
             bytes_sent: self.bytes_sent,
             exchanges: self.exchanges,
         }
+    }
+    fn reset_stats(&mut self) {
+        self.bytes_recv = 0;
+        self.bytes_sent = 0;
+        self.exchanges = 0;
     }
 }
 

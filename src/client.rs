@@ -113,7 +113,7 @@ impl Computation {
     fn run_bls(&self, inputs: Vec<MFr>) -> Vec<MFr> {
         let outputs = match self {
             Computation::Groth16 => {
-                mpc::groth::mpc_test_prove_and_verify(2);
+                mpc::groth::mpc_test_prove_and_verify(1);
                 vec![]
             }
             c => unimplemented!("Cannot run_pairing {:?}", c),
