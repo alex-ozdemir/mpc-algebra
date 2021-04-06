@@ -1,5 +1,5 @@
 use super::*;
-use ark_std::test_rng;
+use ark_std::{test_rng, start_timer, end_timer};
 use ark_groth16::{
     generate_random_parameters, prepare_verifying_key, verify_proof, Proof,
     ProvingKey, VerifyingKey,
@@ -48,11 +48,14 @@ pub fn pk_to_mpc(k: ProvingKey<Bls12_377>) -> ProvingKey<MpcPairingEngine<Bls12_
 }
 
 pub fn pf_publicize(k: Proof<MpcPairingEngine<Bls12_377>>) -> Proof<Bls12_377> {
-    Proof {
+    let pf_timer = start_timer!(|| "publicize proof");
+    let r = Proof {
         a: k.a.publicize_unwrap(),
         b: k.b.publicize_unwrap(),
         c: k.c.publicize_unwrap(),
-    }
+    };
+    end_timer!(pf_timer);
+    r
 }
 
 struct MySillyCircuit<F: Field> {
