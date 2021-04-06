@@ -1,20 +1,15 @@
 use ark_bls12_377::Bls12_377;
-use ark_ff::{
-    FftField, Field, LegendreSymbol, One, PrimeField, SquareRootField, UniformRand, Zero,
-};
-use ark_groth16::{
-    generate_random_parameters, prepare_verifying_key, verify_proof, Proof, ProvingKey,
-    VerifyingKey,
-};
+use ark_ff::{Field, UniformRand};
+use ark_groth16::{generate_random_parameters, prepare_verifying_key, verify_proof};
 use ark_relations::{
     lc,
     r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable},
 };
-use ark_std::{start_timer, end_timer};
 use ark_std::test_rng;
+use ark_std::{end_timer, start_timer};
 use clap::arg_enum;
-use structopt::StructOpt;
 use log::debug;
+use structopt::StructOpt;
 
 use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -88,6 +83,7 @@ fn test_squaring_mpc(n: usize) {
     let circ_data = RepeatedSquaringCircuit::from_start(a, n);
     let public_inputs = vec![circ_data.chain.last().unwrap().unwrap().publicize_unwrap()];
     end_timer!(computation_timer);
+    channel::reset_stats();
     let timer = start_timer!(|| "timed section");
     let mpc_proof =
         create_random_proof::<MpcPairingEngine<Bls12_377>, _, _>(circ_data, &mpc_params, rng)
@@ -192,16 +188,14 @@ impl FieldOpt {
     fn run(&self, computation: Computation, computation_size: usize) {
         self.setup();
         match computation {
-            Computation::Squaring => {
-                match self {
-                    FieldOpt::Mpc { .. } => {
-                        test_squaring_mpc(computation_size);
-                    }
-                    FieldOpt::Local {} => {
-                        test_squaring_local(computation_size);
-                    }
+            Computation::Squaring => match self {
+                FieldOpt::Mpc { .. } => {
+                    test_squaring_mpc(computation_size);
                 }
-            }
+                FieldOpt::Local {} => {
+                    test_squaring_local(computation_size);
+                }
+            },
         }
         self.teardown();
     }
@@ -226,5 +220,6 @@ impl Opt {}
 
 fn main() {
     let opt = Opt::from_args();
+    env_logger::init();
     opt.field.run(opt.computation, opt.computation_size);
 }

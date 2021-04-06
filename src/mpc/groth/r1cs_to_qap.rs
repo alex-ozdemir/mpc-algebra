@@ -1,6 +1,6 @@
 use ark_ff::{One, PrimeField, Zero};
 use ark_poly::EvaluationDomain;
-use ark_std::{cfg_iter, cfg_iter_mut, vec, start_timer, end_timer};
+use ark_std::{cfg_iter, cfg_iter_mut, vec};
 use crate::mpc::BatchProd;
 
 use ark_relations::r1cs::{ConstraintSystemRef, Result as R1CSResult, SynthesisError};
@@ -44,52 +44,6 @@ where
 pub struct R1CStoQAP;
 
 impl R1CStoQAP {
-    #[inline]
-    #[allow(clippy::type_complexity)]
-    pub fn instance_map_with_evaluation<F: PrimeField, D: EvaluationDomain<F>>(
-        cs: ConstraintSystemRef<F>,
-        t: &F,
-    ) -> R1CSResult<(Vec<F>, Vec<F>, Vec<F>, F, usize, usize)> {
-        let matrices = cs.to_matrices().unwrap();
-        let domain_size = cs.num_constraints() + cs.num_instance_variables();
-        let domain = D::new(domain_size).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
-        let domain_size = domain.size();
-
-        let zt = domain.evaluate_vanishing_polynomial(*t);
-
-        // Evaluate all Lagrange polynomials
-        let coefficients_time = start_timer!(|| "Evaluate Lagrange coefficients");
-        let u = domain.evaluate_all_lagrange_coefficients(*t);
-        end_timer!(coefficients_time);
-
-        let qap_num_variables = (cs.num_instance_variables() - 1) + cs.num_witness_variables();
-
-        let mut a = vec![F::zero(); qap_num_variables + 1];
-        let mut b = vec![F::zero(); qap_num_variables + 1];
-        let mut c = vec![F::zero(); qap_num_variables + 1];
-
-        {
-            let start = 0;
-            let end = cs.num_instance_variables();
-            let num_constraints = cs.num_constraints();
-            a[start..end].copy_from_slice(&u[(start + num_constraints)..(end + num_constraints)]);
-        }
-
-        for (i, u_i) in u.iter().enumerate().take(cs.num_constraints()) {
-            for &(ref coeff, index) in &matrices.a[i] {
-                a[index] += &(*u_i * coeff);
-            }
-            for &(ref coeff, index) in &matrices.b[i] {
-                b[index] += &(*u_i * coeff);
-            }
-            for &(ref coeff, index) in &matrices.c[i] {
-                c[index] += &(*u_i * coeff);
-            }
-        }
-
-        Ok((a, b, c, zt, qap_num_variables, domain_size))
-    }
-
     #[inline]
     pub fn witness_map<F: PrimeField + BatchProd, D: EvaluationDomain<F>>(
         prover: ConstraintSystemRef<F>,

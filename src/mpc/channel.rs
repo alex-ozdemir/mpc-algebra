@@ -8,7 +8,7 @@ use super::MpcVal;
 use ark_ec::{PairingEngine, ProjectiveCurve};
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
-use ark_std::{cfg_iter_mut, start_timer, end_timer};
+use ark_std::{start_timer, end_timer};
 
 lazy_static! {
     static ref CH: Mutex<FieldChannel> = Mutex::new(FieldChannel::default());
@@ -173,6 +173,7 @@ impl FieldChannel {
     }
 
     fn field_mul<F: Field>(&mut self, mut a: MpcVal<F>, b: MpcVal<F>) -> MpcVal<F> {
+        debug!("field * field");
         if a.shared && b.shared {
             // x * y = z
             let (x, y, mut z) = self.field_triple();
@@ -200,6 +201,7 @@ impl FieldChannel {
         mut a: Vec<MpcVal<F>>,
         mut b: Vec<MpcVal<F>>,
     ) -> Vec<MpcVal<F>> {
+        debug!("batch field * field: {}", a.len());
         let start = start_timer!(|| "batch multiply");
         //TODO: consider parallel iteration
         let a_shared = a[0].shared;
@@ -323,6 +325,7 @@ impl FieldChannel {
         mut a: MpcVal<G>,
         b: MpcVal<G::ScalarField>,
     ) -> MpcVal<G> {
+        debug!("field * curve");
         if a.shared && b.shared {
             // x * y = z
             let (mut x, y, mut z) = self.curve_scalar_triple();
@@ -425,6 +428,7 @@ impl FieldChannel {
         a: MpcVal<E::G1Projective>,
         b: MpcVal<E::G2Projective>,
     ) -> MpcVal<E::Fqk> {
+        debug!("curve * curve");
         if a.shared && b.shared {
             // x * y = z
             let (x, y, mut z) = self.pairing_triple::<E>();
@@ -543,4 +547,8 @@ pub struct ChannelStats {
 
 pub fn stats() -> ChannelStats {
     CH.lock().expect("Poisoned FieldChannel").stats()
+}
+
+pub fn reset_stats() {
+    CH.lock().expect("Poisoned FieldChannel").reset_stats()
 }
