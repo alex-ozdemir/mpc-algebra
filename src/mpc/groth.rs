@@ -4,10 +4,7 @@ use ark_groth16::{
     generate_random_parameters, prepare_verifying_key, verify_proof, Proof,
     ProvingKey, VerifyingKey,
 };
-use ark_relations::{
-    lc,
-    r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError},
-};
+use super::silly::MySillyCircuit;
 
 pub mod prover;
 pub mod r1cs_to_qap;
@@ -56,37 +53,6 @@ pub fn pf_publicize(k: Proof<MpcPairingEngine<Bls12_377>>) -> Proof<Bls12_377> {
     };
     end_timer!(pf_timer);
     r
-}
-
-struct MySillyCircuit<F: Field> {
-    a: Option<F>,
-    b: Option<F>,
-}
-
-impl<ConstraintF: Field> ConstraintSynthesizer<ConstraintF> for MySillyCircuit<ConstraintF> {
-    fn generate_constraints(
-        self,
-        cs: ConstraintSystemRef<ConstraintF>,
-    ) -> Result<(), SynthesisError> {
-        let a = cs.new_witness_variable(|| self.a.ok_or(SynthesisError::AssignmentMissing))?;
-        let b = cs.new_witness_variable(|| self.b.ok_or(SynthesisError::AssignmentMissing))?;
-        let c = cs.new_input_variable(|| {
-            let mut a = self.a.ok_or(SynthesisError::AssignmentMissing)?;
-            let b = self.b.ok_or(SynthesisError::AssignmentMissing)?;
-
-            a.mul_assign(&b);
-            Ok(a)
-        })?;
-
-        cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
-        cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
-        cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
-        cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
-        cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
-        cs.enforce_constraint(lc!() + a, lc!() + b, lc!() + c)?;
-
-        Ok(())
-    }
 }
 
 pub fn mpc_test_prove_and_verify(n_iters: usize) {

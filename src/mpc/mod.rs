@@ -14,6 +14,11 @@ use std::ops::*;
 
 pub mod channel;
 pub mod groth;
+pub mod marlin;
+pub mod silly;
+pub mod poly;
+
+
 
 // const N_PARTIES: u32 = 2;
 
@@ -88,7 +93,7 @@ macro_rules! impl_basics {
         impl<F: ark_ff::ToBytes> ark_ff::ToBytes for $ty<F> {
             #[inline]
             fn write<W: ark_std::io::Write>(&self, writer: W) -> ark_std::io::Result<()> {
-                assert!(!self.shared);
+                assert!(!self.shared, "ToBytes");
                 self.val.write(writer)
             }
         }
@@ -414,7 +419,7 @@ macro_rules! impl_basics {
                 Self::from_public(F::zero())
             }
             fn is_zero(&self) -> bool {
-                assert!(!self.shared);
+                assert!(!self.shared, "is_zero");
                 self.val.is_zero()
             }
         }
@@ -1010,7 +1015,7 @@ macro_rules! impl_mult_basics {
                 Self::from_public(F::zero())
             }
             fn is_zero(&self) -> bool {
-                assert!(!self.shared);
+                assert!(!self.shared, "zero check");
                 self.val.is_zero()
             }
         }
@@ -1660,11 +1665,16 @@ macro_rules! curve_impl {
                 &self,
                 s: S,
             ) -> <Self as AffineCurve>::Projective {
-                //TODO: fix
-                assert!(!self.shared);
-                let s = s.into();
-                debug!("{} * {}", s, self);
-                $curve_wrapper::from_shared(self.val.mul(s))
+                if self.shared {
+                    // Cast s to bigint..
+                    let bigint = s.into();
+                    let scalar = Self::ScalarField::from_repr(bigint).unwrap();
+                    let proj: Self::Projective = self.clone().into();
+                    channel::curve_mul(proj.into(), scalar.cast_to_shared()).into()
+                } else {
+                    let s = s.into();
+                    $curve_wrapper::from_shared(self.val.mul(s))
+                }
             }
             fn mul_by_cofactor_to_projective(&self) -> <Self as AffineCurve>::Projective {
                 todo!("AffineCurve::mul_by_cofactor_to_projective")
@@ -1691,8 +1701,10 @@ macro_rules! curve_impl {
             fn prime_subgroup_generator() -> Self {
                 Self::from_public(<$curve_proj as ProjectiveCurve>::prime_subgroup_generator())
             }
-            fn batch_normalization(_: &mut [Self]) {
-                todo!("ProjectiveCurve::batch_normalization")
+            fn batch_normalization(elems: &mut [Self]) {
+                //TODO: wrong?
+                elems.iter_mut().for_each(|e| <$curve_proj>::batch_normalization(&mut[e.val]));
+                //todo!("ProjectiveCurve::batch_normalization")
             }
             fn is_normalized(&self) -> bool {
                 todo!("ProjectiveCurve::is_normalized")

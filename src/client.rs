@@ -8,6 +8,9 @@ use ark_ec::PairingEngine;
 use ark_ec::ProjectiveCurve;
 use ark_poly::domain::radix2::Radix2EvaluationDomain;
 use ark_poly::EvaluationDomain;
+use ark_poly::{UVPolynomial,Polynomial};
+use ark_poly_commit::PolynomialCommitment;
+use ark_ff::Field;
 use ark_serialize::CanonicalSerialize;
 use ark_std::rand::SeedableRng;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -37,6 +40,9 @@ arg_enum! {
         PairingProd,
         PairingDiv,
         Groth16,
+        Marlin,
+        PolyEval,
+        PcCom,
     }
 }
 
@@ -46,6 +52,7 @@ enum ComputationDomain {
     Field,
     Pairing,
     BlsPairing,
+    PolyField,
 }
 
 #[derive(Debug, StructOpt)]
@@ -103,7 +110,8 @@ impl Opt {
             Computation::PairingDh | Computation::PairingProd | Computation::PairingDiv => {
                 ComputationDomain::Pairing
             }
-            Computation::Groth16 => ComputationDomain::BlsPairing,
+            Computation::Marlin | Computation::Groth16 | Computation::PcCom => ComputationDomain::BlsPairing,
+            Computation::PolyEval => ComputationDomain::PolyField,
             _ => ComputationDomain::Field,
         }
     }
@@ -114,6 +122,18 @@ impl Computation {
         let outputs = match self {
             Computation::Groth16 => {
                 mpc::groth::mpc_test_prove_and_verify(1);
+                vec![]
+            }
+            Computation::Marlin => {
+                mpc::marlin::local_test_prove_and_verify::<ark_bls12_377::Bls12_377>(1);
+                vec![]
+            }
+            Computation::PcCom => {
+                let poly = MP::from_coefficients_slice(&inputs);
+                let x = MFr::from(2u32);
+                let rng = &mut ark_std::test_rng();
+                let srs = mpc::poly::pc::MpcPolyCommit::setup( 10, Some(1), rng);
+                println!("{:#?}", srs);
                 vec![]
             }
             c => unimplemented!("Cannot run_pairing {:?}", c),
@@ -242,6 +262,21 @@ impl Computation {
                 vec![]
             }
             c => unimplemented!("Cannot run_dh {:?}", c),
+        };
+        println!("Outputs:");
+        for (i, v) in outputs.iter().enumerate() {
+            println!("  {}: {}", i, v);
+        }
+        outputs
+    }
+    fn run_uv_poly<F: Field, P: UVPolynomial<F>>(&self, inputs: Vec<F>) -> Vec<F> {
+        let outputs = match self {
+            Computation::PolyEval => {
+                let p = P::from_coefficients_vec(inputs);
+                let x = F::from(2u32);
+                vec![p.evaluate(&x)]
+            }
+            c => unimplemented!("Cannot run_uv_poly {:?}", c),
         };
         println!("Outputs:");
         for (i, v) in outputs.iter().enumerate() {
@@ -410,6 +445,8 @@ type G1 = ark_bls12_377::G1Projective;
 type MG1 = MpcCurve<G1>;
 type G2 = ark_bls12_377::G2Projective;
 type MG2 = MpcCurve2<G2>;
+type P = ark_poly::univariate::DensePolynomial<Fr>;
+type MP = MpcVal<P>;
 
 fn main() -> () {
     let opt = Opt::from_args();
@@ -496,6 +533,17 @@ fn main() -> () {
             let public_outputs = outputs
                 .into_iter()
                 .map(|c: MFr| c.publicize())
+                .collect::<Vec<_>>();
+            println!("Public Outputs:");
+            for (i, v) in public_outputs.iter().enumerate() {
+                println!("  {}: {}", i, v);
+            }
+        }
+        ComputationDomain::PolyField => {
+            let outputs = opt.computation.run_uv_poly::<MFr, MP>(inputs);
+            let public_outputs = outputs
+                .into_iter()
+                .map(|c| c.publicize())
                 .collect::<Vec<_>>();
             println!("Public Outputs:");
             for (i, v) in public_outputs.iter().enumerate() {

@@ -36,6 +36,9 @@ impl<F: Field> RepeatedSquaringCircuit<F> {
         }
         Self { chain }
     }
+    fn from_chain(f: Vec<F>) -> Self {
+        Self { chain: f.into_iter().map(Some).collect() }
+    }
     fn squarings(&self) -> usize {
         self.chain.len() - 1
     }
@@ -112,6 +115,24 @@ fn test_squaring_local(n: usize) {
     assert!(verify_proof(&pvk, &proof, &public_inputs).unwrap());
 }
 
+fn test_squaring_local_ark(n: usize) {
+    let rng = &mut test_rng();
+    let circ_no_data = RepeatedSquaringCircuit::without_data(n);
+
+    let params = generate_random_parameters::<Bls12_377, _, _>(circ_no_data, rng).unwrap();
+
+    let pvk = prepare_verifying_key::<Bls12_377>(&params.vk);
+
+    let a = ark_bls12_377::Fr::rand(rng);
+    let circ_data = RepeatedSquaringCircuit::from_start(a, n);
+    let public_inputs = vec![circ_data.chain.last().unwrap().unwrap()];
+    let timer = start_timer!(|| "timed section");
+    let proof = ark_groth16::create_random_proof::<Bls12_377, _, _>(circ_data, &params, rng).unwrap();
+    end_timer!(timer);
+
+    assert!(verify_proof(&pvk, &proof, &public_inputs).unwrap());
+}
+
 #[derive(Debug, StructOpt)]
 struct PartyInfo {
     /// Your host
@@ -170,6 +191,7 @@ enum FieldOpt {
         party_info: PartyInfo,
     },
     Local {},
+    ArkLocal {},
 }
 
 impl FieldOpt {
@@ -194,6 +216,9 @@ impl FieldOpt {
                 }
                 FieldOpt::Local {} => {
                     test_squaring_local(computation_size);
+                }
+                FieldOpt::ArkLocal {} => {
+                    test_squaring_local_ark(computation_size);
                 }
             },
         }

@@ -7,7 +7,7 @@ LABEL="timed section"
 
 
 function usage {
-  echo "Usage: $0 {mpc,local} N_SQUARINGS" >&2
+  echo "Usage: $0 {mpc,local,ark-local} N_SQUARINGS" >&2
   exit 1
 }
 
@@ -26,7 +26,10 @@ case $infra in
         wait $pid0 $pid1
     ;;
     local)
-        $BIN -c squaring --computation-size $size local | rg 'End: *crypto' | rg -o '[0-9][0-9.]*.s'
+        $BIN -c squaring --computation-size $size local | rg "End: *$LABEL" | rg -o '[0-9][0-9.]*.s'
+    ;;
+    ark-local)
+        $BIN -c squaring --computation-size $size ark-local | rg "End: *$LABEL" | rg -o '[0-9][0-9.]*.s'
     ;;
     *)
         usage
